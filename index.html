@@ -302,9 +302,9 @@ body{
   flex-shrink:0; padding:10px 16px; border-radius:14px; background:#fff; border:1.5px solid var(--line);
   font-weight:700; font-size:12.5px; line-height:1; color:var(--ink-soft); cursor:pointer; text-align:center; min-width:64px;
 }
-.day-pill.active{background:var(--grad-primary); color:#fff; border-color:transparent; box-shadow:0 8px 18px -6px rgba(62,123,250,.5);}
+.day-pill.active{background:var(--grad-primary); color:#fff; border:0; padding:11.5px 17.5px; box-shadow:0 8px 18px -6px rgba(62,123,250,.5);}
 .day-pill.prep{border-color:rgba(124,106,246,.35); color:var(--violet);}
-.day-pill.prep.active{background:linear-gradient(135deg,#7C6AF6,#34D9E8); color:#fff; box-shadow:0 8px 18px -6px rgba(124,106,246,.5);}
+.day-pill.prep.active{background:linear-gradient(135deg,#7C6AF6,#34D9E8); color:#fff; border:0; padding:11.5px 17.5px; box-shadow:0 8px 18px -6px rgba(124,106,246,.5);}
 
 /* Timeline */
 .timeline{position:relative; padding-left:6px;}
@@ -532,8 +532,8 @@ body{
       <div class="sheet-sub">Add a stop to your day's timeline.</div>
       <div class="field-row">
         <div class="field">
-          <label>Day</label>
-          <input type="number" id="input-act-day" min="1" value="1">
+          <label>Date</label>
+          <input type="date" id="input-act-date">
         </div>
         <div class="field">
           <label>Time</label>
@@ -905,9 +905,14 @@ let editingActivityId = null;
 function openActivityModal(planId) {
   editingActivityId = planId || null;
   const a = planId ? state.plans.find(x => x.PlanID === planId) : null;
+  const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
   document.getElementById('activity-modal-title').textContent = a ? 'Edit Activity' : 'Add Activity';
   document.getElementById('activity-save-btn').textContent = a ? 'Save Changes' : 'Add to Timeline';
-  document.getElementById('input-act-day').value = a ? a.Gun : (state.activeDay || 1);
+  const dateInput = document.getElementById('input-act-date');
+  const dayForDate = a ? Number(a.Gun) : Math.max(1, state.activeDay || 1);
+  dateInput.value = formatDateStr(tripDateForDay(trip, dayForDate));
+  dateInput.min = formatDateStr(trip.BaslangicTarihi);
+  dateInput.max = formatDateStr(trip.BitisTarihi);
   document.getElementById('input-act-time').value = a ? formatTime(a.Saat) : '';
   document.getElementById('input-act-title').value = a ? a.Baslik : '';
   document.getElementById('input-act-desc').value = a ? (a.Notlar || '') : '';
@@ -1033,10 +1038,18 @@ function tripDateForDay(trip, day) {
   d.setUTCDate(d.getUTCDate() + (Number(day) - 1));
   return d.toISOString().slice(0,10);
 }
+function dayNumberForDate(trip, dateStr) {
+  const start = new Date(formatDateStr(trip.BaslangicTarihi));
+  const target = new Date(formatDateStr(dateStr));
+  const diff = Math.round((target - start) / 86400000) + 1;
+  return Math.max(1, diff);
+}
 
 async function saveActivity() {
   if (!requireConnection()) return;
-  const day = Number(document.getElementById('input-act-day').value) || 1;
+  const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
+  const selectedDate = document.getElementById('input-act-date').value;
+  const day = dayNumberForDate(trip, selectedDate);
   const time = document.getElementById('input-act-time').value;
   const title = document.getElementById('input-act-title').value.trim();
   const desc = document.getElementById('input-act-desc').value.trim();
@@ -1044,8 +1057,8 @@ async function saveActivity() {
   const costRaw = document.getElementById('input-act-cost').value;
   const cost = costRaw ? Number(costRaw) : 0;
   if (!title || !time) { showToast('Add a time and title', 'warn'); return; }
+  if (!selectedDate) { showToast('Pick a date', 'warn'); return; }
 
-  const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
   const isNew = !editingActivityId;
   const activity = isNew
     ? { PlanID: uid(), SeyahatID: state.currentTripId, Gun: day, Saat: time, Baslik: title, Kategori: selectedActCategory, KonumLink: link, HarcamaID: '', Notlar: desc }
@@ -1366,7 +1379,7 @@ function renderPlanTab(trip) {
 
   const dayPills = [
     `<div class="day-pill prep ${state.activeDay===0?'active':''}" data-day="0" onclick="selectDay(0)">Pre Vacation</div>`,
-    ...days.map(d => `<div class="day-pill ${d===state.activeDay?'active':''}" data-day="${d}" onclick="selectDay(${d})">Day ${d}</div>`)
+    ...days.map(d => `<div class="day-pill ${d===state.activeDay?'active':''}" data-day="${d}" onclick="selectDay(${d})">${fmtDateShort(tripDateForDay(trip, d))}</div>`)
   ].join('');
 
   document.getElementById('tab-content').innerHTML = `
@@ -1434,7 +1447,7 @@ function renderDayTimeline(trip) {
         </div>
       </div>
     </div>`;
-  }).join('') : `<div class="empty-state" style="padding:30px 10px;">${svgEmptyCase}<h3>Nothing planned yet</h3><p>Tap + to add your first stop for Day ${state.activeDay}.</p></div>`;
+  }).join('') : `<div class="empty-state" style="padding:30px 10px;">${svgEmptyCase}<h3>Nothing planned yet</h3><p>Tap + to add your first stop for ${fmtDateShort(tripDateForDay(trip, state.activeDay))}.</p></div>`;
 
   document.getElementById('plan-body').innerHTML = `<div class="timeline">${timelineHtml}</div>`;
 }
