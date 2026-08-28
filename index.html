@@ -432,9 +432,10 @@ body{
 #offline-banner{
   position:fixed; top:var(--header-h); left:0; right:0; z-index:39;
   background:#FFB020; color:#3B2405; font-size:12.5px; font-weight:700; text-align:center;
-  padding:9px 16px; transform:translateY(-100%); transition:transform .25s ease;
+  padding:9px 16px; transform:translateY(-12px); opacity:0; pointer-events:none;
+  transition:transform .25s ease, opacity .25s ease;
 }
-#offline-banner.show{transform:translateY(0);}
+#offline-banner.show{transform:translateY(0); opacity:1; pointer-events:auto;}
 
 /* Sync indicator: small pill, bottom-left, shows queued/syncing count */
 #sync-indicator{

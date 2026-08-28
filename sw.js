@@ -2,11 +2,11 @@
 // Caches the app shell (this single HTML file + icons) so the PWA launches
 // instantly from the home screen and the UI still loads with no signal.
 // Data itself always goes straight to Google Sheets (see index.html) —
-// this worker never caches API responses, only static assets.
+// this worker never caches API responses or third-party CDN scripts,
+// only the app's own static assets.
 
-const CACHE_NAME = 'rota-shell-v1';
+const CACHE_NAME = 'rota-shell-v2';
 const SHELL_FILES = [
-  './',
   './index.html',
   './manifest.json',
   './icons/icon-192.png',
@@ -15,7 +15,11 @@ const SHELL_FILES = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL_FILES)).catch(() => {})
+    caches.open(CACHE_NAME).then((cache) =>
+      // Cache each file independently so one missing/renamed asset can
+      // never block the whole service worker from installing.
+      Promise.allSettled(SHELL_FILES.map((url) => cache.add(url)))
+    )
   );
   self.skipWaiting();
 });
@@ -30,23 +34,23 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  const url = event.request.url;
+  const req = event.request;
 
-  // Never intercept calls to the Google Apps Script backend — those must
-  // always hit the network live so data stays real-time and consistent.
-  if (url.includes('script.google.com') || url.includes('script.googleusercontent.com')) {
+  // Only ever manage our own same-origin static files. Everything else
+  // (Google Apps Script, Chart.js/Leaflet/SortableJS CDNs, exchange-rate
+  // and geocoding APIs, Google Fonts) is left completely untouched so it
+  // always goes straight to the network with normal browser behavior.
+  if (req.method !== 'GET' || new URL(req.url).origin !== self.location.origin) {
     return;
   }
 
-  // App shell: cache-first (instant load), falling back to network then
-  // refreshing the cache for next time.
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const network = fetch(event.request)
+    caches.match(req).then((cached) => {
+      const network = fetch(req)
         .then((response) => {
           if (response && response.ok) {
             const clone = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
+            caches.open(CACHE_NAME).then((cache) => cache.put(req, clone));
           }
           return response;
         })
