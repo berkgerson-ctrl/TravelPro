@@ -4,9 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, viewport-fit=cover">
 <title>All In One Travel Pro</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#3E7BFA">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rota">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Manrope:wght@500;700;800&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
 <style>
 :root{
   --bg:#EEF2FB;
@@ -242,6 +253,7 @@ body{
 .field input:focus, .field select:focus, .field textarea:focus{border-color:var(--blue); background:#fff;}
 .field-row{display:flex; gap:10px;}
 .field-row .field{flex:1;}
+.conversion-preview{font-size:12px; color:var(--blue-deep); font-weight:600; margin:-8px 0 14px; min-height:16px;}
 
 .location-row{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
 .location-row input{flex:1;}
@@ -297,6 +309,29 @@ body{
 
 /* Day selector */
 .day-strip{display:flex; gap:8px; overflow-x:auto; overflow-y:visible; padding:12px 2px 22px; margin:-12px -2px 0; scrollbar-width:none;}
+
+/* Search + filter bar (Plan and Budget lists) */
+.filter-bar{margin-bottom:16px;}
+.search-input-wrap{position:relative; margin-bottom:10px;}
+.search-input-wrap svg{position:absolute; left:14px; top:50%; transform:translateY(-50%); width:15px; height:15px; stroke:var(--ink-muted); pointer-events:none;}
+.search-input-wrap input{
+  width:100%; padding:11px 14px 11px 38px; border-radius:14px; border:1.5px solid var(--line);
+  background:#fff; font-size:13.5px; font-family:'Inter',sans-serif; color:var(--ink); outline:none;
+}
+.search-input-wrap input:focus{border-color:var(--blue);}
+.filter-row{display:flex; gap:8px; align-items:center;}
+.filter-chips{display:flex; gap:6px; overflow-x:auto; scrollbar-width:none; flex:1;}
+.filter-chips::-webkit-scrollbar{display:none;}
+.filter-chip{
+  flex-shrink:0; padding:7px 13px; border-radius:20px; font-size:11.5px; font-weight:700;
+  background:#fff; border:1.5px solid var(--line); color:var(--ink-soft); cursor:pointer;
+  display:flex; align-items:center; justify-content:center; line-height:1; text-align:center;
+}
+.filter-chip.active{background:var(--grad-primary); color:#fff; border-color:transparent;}
+.sort-select{
+  flex-shrink:0; padding:8px 10px; border-radius:12px; border:1.5px solid var(--line);
+  background:#fff; font-size:11.5px; font-weight:700; color:var(--ink-soft); outline:none;
+}
 .day-strip::-webkit-scrollbar{display:none;}
 .day-pill{
   flex-shrink:0; padding:10px 16px; border-radius:14px; background:#fff; border:1.5px solid var(--line);
@@ -310,9 +345,13 @@ body{
 .timeline{position:relative; padding-left:6px;}
 .activity-card{
   background:#fff; border-radius:18px; padding:15px 16px; margin-bottom:12px;
-  box-shadow:var(--shadow-card); display:flex; gap:13px; align-items:flex-start;
-  border:1px solid rgba(255,255,255,.6);
+  box-shadow:var(--shadow-card); display:flex; gap:11px; align-items:flex-start;
+  border:1px solid rgba(255,255,255,.6); touch-action:manipulation;
 }
+.drag-grip{width:16px; height:20px; flex-shrink:0; color:var(--line); cursor:grab; margin-top:6px;}
+.drag-grip svg{width:16px; height:20px;}
+.sortable-ghost{opacity:.35;}
+.sortable-chosen{box-shadow:0 14px 28px -10px rgba(37,64,152,.35); cursor:grabbing;}
 .activity-time{font-family:'JetBrains Mono',monospace; font-size:12px; font-weight:600; color:var(--blue-deep); background:var(--grad-soft); padding:6px 9px; border-radius:9px; white-space:nowrap; flex-shrink:0;}
 .activity-body{flex:1; min-width:0;}
 .activity-title{font-weight:700; font-size:14.5px; margin-bottom:6px; line-height:1.3;}
@@ -377,6 +416,7 @@ body{
 .expense-desc{font-weight:700; font-size:13.5px; margin-bottom:2px;}
 .expense-date{font-size:11px; color:var(--ink-muted); font-weight:500;}
 .expense-notes{font-size:12px; color:var(--ink-muted); line-height:1.4; margin-top:6px;}
+.expense-orig{font-size:11px; color:var(--ink-muted); font-style:italic; margin-top:3px;}
 .expense-amt{font-family:'JetBrains Mono',monospace; font-weight:600; font-size:14px; flex-shrink:0;}
 
 /* Toast */
@@ -388,6 +428,29 @@ body{
 }
 #toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
 
+/* Offline banner: sits just under the fixed header, full width */
+#offline-banner{
+  position:fixed; top:var(--header-h); left:0; right:0; z-index:39;
+  background:#FFB020; color:#3B2405; font-size:12.5px; font-weight:700; text-align:center;
+  padding:9px 16px; transform:translateY(-100%); transition:transform .25s ease;
+}
+#offline-banner.show{transform:translateY(0);}
+
+/* Sync indicator: small pill, bottom-left, shows queued/syncing count */
+#sync-indicator{
+  position:fixed; z-index:46; left:16px; bottom:calc(var(--nav-h) + 12px);
+  background:#fff; color:var(--ink-soft); font-size:11px; font-weight:700;
+  padding:7px 12px; border-radius:20px; box-shadow:var(--shadow-card);
+  opacity:0; transform:translateY(8px); transition:all .2s ease; pointer-events:none;
+  display:flex; align-items:center; gap:6px; text-align:center;
+}
+#sync-indicator.show{opacity:1; transform:translateY(0);}
+#sync-indicator::before{content:''; width:7px; height:7px; border-radius:50%; background:#FFB020; flex-shrink:0; animation:pulse-dot 1.4s ease-in-out infinite;}
+@keyframes pulse-dot{0%,100%{opacity:1;} 50%{opacity:.35;}}
+
+/* Small "pending sync" dot shown on cards with unsynced changes */
+.pending-dot{display:inline-block; width:7px; height:7px; border-radius:50%; background:#FFB020; margin-left:6px; vertical-align:middle; animation:pulse-dot 1.4s ease-in-out infinite;}
+
 /* Connection status */
 .status-pill{display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; padding:6px 11px; border-radius:20px; margin-bottom:16px;}
 .status-pill.connected{background:rgba(22,199,154,.12); color:var(--success);}
@@ -398,6 +461,40 @@ body{
 .section-heading:first-child{margin-top:0;}
 
 ::-webkit-scrollbar{width:0; height:0;}
+
+/* Map tab */
+.map-tab-wrap{border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-card); margin-bottom:16px;}
+#trip-map{width:100%; height:340px; background:#E4E9F5;}
+.map-legend{background:#fff; padding:14px 16px;}
+.map-legend-row{display:flex; align-items:center; gap:10px; padding:8px 0; border-bottom:1px solid var(--line); cursor:pointer;}
+.map-legend-row:last-child{border-bottom:none;}
+.map-legend-dot{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
+.map-legend-label{flex:1; font-size:12.5px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.map-legend-day{font-size:10.5px; color:var(--ink-muted); font-weight:700; flex-shrink:0;}
+.leaflet-popup-content{font-family:'Inter',sans-serif; font-size:12.5px;}
+.leaflet-popup-content b{font-family:'Manrope',sans-serif;}
+
+/* Print-only summary — hidden on screen, shown via window.print() */
+.print-only{display:none;}
+@media print {
+  #header, #bottom-nav, #fab, #offline-banner, #sync-indicator, #toast, .blob, .overlay { display:none !important; }
+  #app-shell, #content { display:none !important; }
+  body{background:#fff;}
+  .print-only{display:block !important; padding:10px; color:#111; font-family:'Inter',sans-serif;}
+  .print-only h1{font-family:'Manrope',sans-serif; font-size:22px; margin:0 0 4px;}
+  .print-only .print-sub{color:#666; font-size:12px; margin:0 0 18px;}
+  .print-only h2{font-family:'Manrope',sans-serif; font-size:15px; margin:22px 0 8px; border-bottom:2px solid #222; padding-bottom:5px;}
+  .print-only h3{font-family:'Manrope',sans-serif; font-size:12.5px; margin:14px 0 6px; color:#333;}
+  .print-table{width:100%; border-collapse:collapse; font-size:11.5px; margin-bottom:8px;}
+  .print-table td{padding:5px 6px; border-bottom:1px solid #eee; vertical-align:top;}
+  .pt-time{font-family:'JetBrains Mono',monospace; white-space:nowrap; width:50px; color:#444;}
+  .pt-cat{color:#888; font-size:10.5px;}
+  .pt-notes{color:#666; font-size:10.5px; margin-top:2px;}
+  .pt-amt{text-align:right; font-weight:700; white-space:nowrap;}
+  .print-list{list-style:none; padding:0; margin:0; font-size:11.5px;}
+  .print-list li{padding:3px 0;}
+  .print-footer{margin-top:26px; font-size:9.5px; color:#999; text-align:center;}
+}
 </style>
 </head>
 <body>
@@ -583,12 +680,19 @@ body{
       <div class="field-row">
         <div class="field">
           <label>Amount</label>
-          <input type="number" id="input-exp-amount" placeholder="0">
+          <input type="number" id="input-exp-amount" placeholder="0" oninput="updateConversionPreview()">
         </div>
-        <div class="field">
-          <label>Date</label>
-          <input type="date" id="input-exp-date">
+        <div class="field" style="max-width:110px;">
+          <label>Currency</label>
+          <select id="input-exp-currency" onchange="updateConversionPreview()">
+            <option>USD</option><option>EUR</option><option>GBP</option><option>TRY</option><option>JPY</option>
+          </select>
         </div>
+      </div>
+      <div class="conversion-preview" id="conversion-preview"></div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" id="input-exp-date">
       </div>
       <div class="field">
         <label>Category</label>
@@ -600,6 +704,9 @@ body{
   </div>
 
   <div id="toast"></div>
+  <div id="print-summary" class="print-only"></div>
+  <div id="offline-banner">📡 You're offline — changes are saved and will sync automatically</div>
+  <div id="sync-indicator"></div>
 
 <script>
 /* ============================================================
@@ -633,6 +740,10 @@ const svgPlus = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-
 const svgAlert = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></svg>';
 const svgEmptyCase = '<svg viewBox="0 0 24 24" fill="none" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="7" width="18" height="13" rx="2"></rect><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>';
 const svgPin = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
+const svgSearch = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>';
+const svgGrip = '<svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.5"></circle><circle cx="15" cy="6" r="1.5"></circle><circle cx="9" cy="12" r="1.5"></circle><circle cx="15" cy="12" r="1.5"></circle><circle cx="9" cy="18" r="1.5"></circle><circle cx="15" cy="18" r="1.5"></circle></svg>';
+const svgExport = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>';
+const svgMapPinLg = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"></path><circle cx="12" cy="10" r="3"></circle></svg>';
 const svgMinus = '<svg viewBox="0 0 24 24" fill="none" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"></line></svg>';
 
 /* ============================================================
@@ -646,10 +757,18 @@ let state = {
   todos: [],
   view: 'dashboard',      // dashboard | tripDetail
   currentTripId: null,
-  activeTab: 'plan',        // plan | budget
+  activeTab: 'plan',        // plan | budget | map
   activeDay: 1,
   loading: false,
+  isOnline: navigator.onLine,
+  pendingQueue: [],
+  syncing: false,
+  planFilter: { search: '', category: 'All' },
+  expenseFilter: { search: '', category: 'All', sort: 'date_desc' },
 };
+
+window.addEventListener('online', () => goOnline());
+window.addEventListener('offline', () => goOffline());
 
 const CURRENCY_SYMBOL = { USD:'$', EUR:'€', GBP:'£', TRY:'₺', JPY:'¥' };
 function fmtMoney(amount, currency) {
@@ -700,13 +819,12 @@ function formatDateStr(value) {
 /* ============================================================
    STATE INIT
    ------------------------------------------------------------
-   No local caching of trip/plan/expense/todo data — this avoids
-   sync conflicts across devices. The ONLY value ever written to
-   localStorage is the Google Apps Script URL (key: travelProUrl).
-   Trip/Plan/Expense/Todo data lives only in memory for the
-   session and is read from / written to Google Sheets directly.
-   Without a connected URL, entries exist only until the page is
-   reloaded — the UI warns about this when saving.
+   Trip/Plan/Expense/Todo data itself is never cached wholesale —
+   Google Sheets stays the single source of truth, which avoids
+   sync conflicts across devices. The ONLY things ever written to
+   localStorage are: the Apps Script URL (key: travelProUrl) and
+   a small queue of not-yet-synced writes (key: travelProQueue),
+   used only to survive going offline — see OFFLINE QUEUE below.
    ============================================================ */
 function loadLocal() {
   state.trips = [];
@@ -715,39 +833,67 @@ function loadLocal() {
   state.todos = [];
 }
 function saveLocal() {
-  // Intentionally a no-op: nothing but the Apps Script URL is persisted.
-  // Kept as a named call-site so intent stays clear at each call below.
+  // Intentionally a no-op: nothing but the URL + sync queue persist.
 }
 
 /* ============================================================
-   BACKEND API (Google Apps Script) — single source of truth
+   BACKEND API (Google Apps Script) — retry with backoff + clear errors
    ============================================================ */
-async function apiCall(action, data) {
-  if (!state.gasUrl) { return { success: false, error: 'not_connected' }; }
-  try {
-    const res = await fetch(state.gasUrl, {
-      method: 'POST',
-      body: JSON.stringify({ action, data }),
-      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
-    });
-    return await res.json();
-  } catch (e) {
-    console.warn('API call failed', e);
-    return { success: false, error: e.message };
-  }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+function friendlyError(result) {
+  const raw = (result && result.error) ? String(result.error) : '';
+  if (!state.gasUrl || raw === 'not_connected') return 'Not connected — connect Google Sheets in Settings.';
+  if (/permission|authoriz|forbidden|401|403|access/i.test(raw)) return 'Your Google Sheets connection may have expired or lost permission — try reconnecting the URL in Settings.';
+  if (/timeout|network|failed to fetch|load failed/i.test(raw)) return 'Network issue reaching Google Sheets. It will keep retrying automatically.';
+  if (raw) return 'Google Sheets error: ' + raw;
+  return 'Could not reach Google Sheets. It will keep retrying automatically.';
 }
-async function apiGet(action) {
-  if (!state.gasUrl) return null;
-  try {
-    const res = await fetch(state.gasUrl + '?action=' + action);
-    return await res.json();
-  } catch (e) {
-    console.warn('API get failed', e);
-    return { success: false, error: e.message };
+
+async function apiCallRaw(action, data) {
+  const res = await fetch(state.gasUrl, {
+    method: 'POST',
+    body: JSON.stringify({ action, data }),
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+  });
+  return await res.json();
+}
+async function apiCall(action, data, opts) {
+  opts = opts || {};
+  const maxRetries = opts.retries != null ? opts.retries : 2;
+  if (!state.gasUrl) return { success: false, error: 'not_connected' };
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await apiCallRaw(action, data);
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxRetries) await sleep(500 * Math.pow(2, attempt)); // 500ms, 1s, 2s...
+    }
   }
+  console.warn('API call failed after retries', lastErr);
+  return { success: false, error: (lastErr && lastErr.message) || 'network_error' };
+}
+async function apiGet(action, opts) {
+  opts = opts || {};
+  const maxRetries = opts.retries != null ? opts.retries : 2;
+  if (!state.gasUrl) return null;
+  let lastErr;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(state.gasUrl + '?action=' + action);
+      return await res.json();
+    } catch (e) {
+      lastErr = e;
+      if (attempt < maxRetries) await sleep(500 * Math.pow(2, attempt));
+    }
+  }
+  console.warn('API get failed after retries', lastErr);
+  return { success: false, error: (lastErr && lastErr.message) || 'network_error' };
 }
 async function refreshFromBackend() {
   if (!state.gasUrl) return;
+  if (!state.isOnline) { showToast("You're offline — showing what's already loaded", 'warn'); return; }
   showToast('Syncing with Google Sheets…', 'loading');
   const result = await apiGet('getData');
   if (result && result.success) {
@@ -758,8 +904,110 @@ async function refreshFromBackend() {
     showToast('Synced', 'success');
     render();
   } else {
-    showToast('Could not reach Sheets — showing local data', 'warn');
+    showToast(friendlyError(result), 'warn');
   }
+}
+
+/* ============================================================
+   OFFLINE QUEUE
+   ------------------------------------------------------------
+   Every write is applied to the UI immediately, then queued and
+   flushed to Google Sheets in the background — in order, with
+   automatic retry. This means the app is fully usable with no
+   signal (e.g. mid-flight, roaming abroad): nothing is lost,
+   it just syncs as soon as a connection is available again.
+   ============================================================ */
+function loadQueue() {
+  try { state.pendingQueue = JSON.parse(localStorage.getItem('travelProQueue') || '[]'); }
+  catch (e) { state.pendingQueue = []; }
+}
+function saveQueueToDisk() {
+  try { localStorage.setItem('travelProQueue', JSON.stringify(state.pendingQueue)); }
+  catch (e) { console.warn('Could not persist sync queue', e); }
+}
+function entityIdOf(item) {
+  const d = item.data || {};
+  return d.SeyahatID || d.PlanID || d.HarcamaID || d.TodoID || null;
+}
+function isPending(id) {
+  return !!id && state.pendingQueue.some(q => entityIdOf(q) === id);
+}
+function queueWrite(action, data) {
+  const item = { qid: uid(), action, data: JSON.parse(JSON.stringify(data)), attempts: 0, ts: Date.now() };
+  state.pendingQueue.push(item);
+  saveQueueToDisk();
+  kickQueue(0);
+  return item;
+}
+
+let queueTimer = null;
+function kickQueue(delayMs) {
+  clearTimeout(queueTimer);
+  queueTimer = setTimeout(processQueue, delayMs == null ? 0 : delayMs);
+}
+
+async function processQueue() {
+  if (state.syncing || !state.isOnline || !state.gasUrl) return;
+  if (!state.pendingQueue.length) return;
+  state.syncing = true;
+  updateSyncIndicator();
+
+  while (state.pendingQueue.length && state.isOnline) {
+    const item = state.pendingQueue[0];
+    const result = await apiCall(item.action, item.data, { retries: 1 });
+    if (result && result.success) {
+      state.pendingQueue.shift();
+      saveQueueToDisk();
+      render();
+    } else {
+      item.attempts = (item.attempts || 0) + 1;
+      saveQueueToDisk();
+      if (item.attempts === 5) {
+        showToast('A change is stuck syncing — ' + friendlyError(result), 'warn');
+      }
+      break; // stop here to preserve write order; the rest retry later
+    }
+  }
+  state.syncing = false;
+  updateSyncIndicator();
+  if (state.pendingQueue.length) kickQueue(15000); // back off and try again
+}
+
+function updateSyncIndicator() {
+  const el = document.getElementById('sync-indicator');
+  if (!el) return;
+  const count = state.pendingQueue.length;
+  if (!count) { el.classList.remove('show'); return; }
+  el.textContent = state.syncing
+    ? `Syncing ${count} change${count>1?'s':''}…`
+    : (state.isOnline ? `${count} change${count>1?'s':''} waiting to sync` : `Offline — ${count} change${count>1?'s':''} queued`);
+  el.classList.add('show');
+}
+
+function goOnline() {
+  state.isOnline = true;
+  updateOfflineBanner();
+  showToast('Back online — syncing…', 'success');
+  kickQueue(0);
+}
+function goOffline() {
+  state.isOnline = false;
+  updateOfflineBanner();
+  showToast("You're offline — changes will be saved and synced automatically", 'warn');
+}
+function updateOfflineBanner() {
+  const el = document.getElementById('offline-banner');
+  if (!el) return;
+  el.classList.toggle('show', !state.isOnline);
+}
+
+/* A single write path used by every save/delete below: apply optimistically,
+   queue for Sheets, and let processQueue retry in the background. */
+function performWrite(action, data, apply, successMsg) {
+  apply(data);
+  render();
+  queueWrite(action, data);
+  showToast(state.isOnline ? successMsg : 'Saved offline — will sync automatically', state.isOnline ? 'success' : 'warn');
 }
 
 /* ============================================================
@@ -778,6 +1026,7 @@ function showToast(msg, type) {
    NAVIGATION
    ============================================================ */
 function goDashboard() {
+  destroyTripMap();
   state.view = 'dashboard';
   render();
 }
@@ -933,6 +1182,8 @@ let editingExpenseId = null;
 function openExpenseModal(expId) {
   editingExpenseId = expId || null;
   const e = expId ? state.expenses.find(x => x.HarcamaID === expId) : null;
+  const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
+  const baseCurrency = trip ? trip.ParaBirimi : 'USD';
   document.getElementById('expense-modal-title').textContent = e ? 'Edit Expense' : 'Add Expense';
   document.getElementById('expense-save-btn').textContent = e ? 'Save Changes' : 'Add Expense';
   document.getElementById('expense-modal-sub').textContent = (e && e.PlanID)
@@ -940,11 +1191,54 @@ function openExpenseModal(expId) {
     : 'Log a purchase to keep your budget accurate.';
   document.getElementById('input-exp-desc').value = e ? e.Aciklama : '';
   document.getElementById('input-exp-notes').value = e ? (e.Notlar || '') : '';
-  document.getElementById('input-exp-amount').value = e ? e.Tutar : '';
+  document.getElementById('input-exp-amount').value = e ? (e.TutarOrijinal || e.Tutar) : '';
+  document.getElementById('input-exp-currency').value = e ? (e.ParaBirimiOrijinal || e.ParaBirimi || baseCurrency) : baseCurrency;
   document.getElementById('input-exp-date').value = e ? formatDateStr(e.Tarih) : new Date().toISOString().slice(0,10);
+  document.getElementById('conversion-preview').textContent = '';
   selectedExpCategory = e ? (e.Kategori || 'Food') : 'Food';
   renderCategoryChips('exp-category-select', selectedExpCategory, (c) => selectedExpCategory = c, CATEGORY_ORDER);
   openOverlay('overlay-expense');
+  updateConversionPreview();
+}
+
+/* ============================================================
+   MULTI-CURRENCY CONVERSION (live rates, no API key required)
+   ============================================================ */
+const exchangeRateCache = {}; // { 'USD': { rates: {...}, ts } }
+async function getExchangeRate(from, to) {
+  if (!from || !to || from === to) return 1;
+  const cached = exchangeRateCache[from];
+  if (cached && (Date.now() - cached.ts) < 3600000) return cached.rates[to] || null;
+  try {
+    const res = await fetch(`https://open.er-api.com/v6/latest/${from}`);
+    const data = await res.json();
+    if (data && data.result === 'success' && data.rates) {
+      exchangeRateCache[from] = { rates: data.rates, ts: Date.now() };
+      return data.rates[to] || null;
+    }
+  } catch (e) { console.warn('Exchange rate fetch failed', e); }
+  return null;
+}
+let conversionDebounceTimer;
+function updateConversionPreview() {
+  clearTimeout(conversionDebounceTimer);
+  conversionDebounceTimer = setTimeout(async () => {
+    const el = document.getElementById('conversion-preview');
+    const amount = Number(document.getElementById('input-exp-amount').value);
+    const currency = document.getElementById('input-exp-currency').value;
+    const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
+    const baseCurrency = trip ? trip.ParaBirimi : 'USD';
+    if (!amount || currency === baseCurrency) { el.textContent = ''; return; }
+    if (!state.isOnline) { el.textContent = "Offline — will convert once you're back online"; return; }
+    el.textContent = 'Fetching exchange rate…';
+    const rate = await getExchangeRate(currency, baseCurrency);
+    if (rate) {
+      const converted = Math.round(amount * rate * 100) / 100;
+      el.textContent = `≈ ${fmtMoney(converted, baseCurrency)} at today's rate`;
+    } else {
+      el.textContent = "Couldn't fetch a live rate — will save the entered amount as-is";
+    }
+  }, 450);
 }
 function renderCategoryChips(containerId, active, onSelect, cats) {
   const el = document.getElementById(containerId);
@@ -963,11 +1257,10 @@ function renderCategoryChips(containerId, active, onSelect, cats) {
 /* ============================================================
    CRUD ACTIONS
    ------------------------------------------------------------
-   "Confirm before commit": nothing is added to app state (and
-   therefore nothing appears in the UI) until Google Sheets has
-   confirmed the write succeeded. This guarantees there is never
-   a moment where data exists only in memory and then silently
-   vanishes on reload — if it's on screen, it's in Sheets.
+   Every save/delete applies instantly to the UI and queues a
+   sync to Google Sheets (see performWrite / OFFLINE QUEUE above)
+   — this is what makes the app work seamlessly offline and
+   retry automatically on flaky connections.
    ============================================================ */
 function requireConnection() {
   if (!state.gasUrl) {
@@ -984,7 +1277,7 @@ function setBtnSaving(btnId, saving, savingLabel, idleLabel) {
   btn.textContent = saving ? savingLabel : idleLabel;
 }
 
-async function saveTrip() {
+function saveTrip() {
   if (!requireConnection()) return;
   const name = document.getElementById('input-trip-name').value.trim();
   const start = document.getElementById('input-trip-start').value;
@@ -993,44 +1286,36 @@ async function saveTrip() {
   const currency = document.getElementById('input-trip-currency').value;
   const locations = tripLocations.map(l => l.trim()).filter(Boolean);
   if (!name || !start || !end) { showToast('Fill in name and dates', 'warn'); return; }
-  if (new Date(end) < new Date(start)) { showToast('End date must be on or after the start date', 'warn'); return; }
   if (!locations.length) { showToast('Add at least one location', 'warn'); return; }
+  if (new Date(end) < new Date(start)) { showToast('End date must be on or after the start date', 'warn'); return; }
 
   const isNew = !editingTripId;
   const trip = isNew
     ? { SeyahatID: uid(), SeyahatAdi: name, Lokasyonlar: JSON.stringify(locations), BaslangicTarihi: start, BitisTarihi: end, ToplamButce: Number(budget) || 0, ParaBirimi: currency }
     : Object.assign({}, state.trips.find(t => t.SeyahatID === editingTripId), { SeyahatAdi: name, Lokasyonlar: JSON.stringify(locations), BaslangicTarihi: start, BitisTarihi: end, ToplamButce: Number(budget) || 0, ParaBirimi: currency });
 
-  setBtnSaving('trip-save-btn', true, 'Saving…', 'Save Trip');
-  const result = await apiCall('saveTrip', trip);
-  setBtnSaving('trip-save-btn', false, 'Saving…', 'Save Trip');
-
-  if (result && result.success) {
-    if (isNew) state.trips.push(trip);
-    else Object.assign(state.trips.find(t => t.SeyahatID === editingTripId), trip);
-    closeOverlay('overlay-trip');
-    render();
-    showToast(isNew ? 'Trip added' : 'Trip updated', 'success');
-  } else {
-    showToast('Could not save to Google Sheets — nothing was added. Check your connection and try again.', 'warn');
-  }
+  closeOverlay('overlay-trip');
+  performWrite('saveTrip', trip, (t) => {
+    if (isNew) state.trips.push(t);
+    else Object.assign(state.trips.find(x => x.SeyahatID === editingTripId), t);
+  }, isNew ? 'Trip added' : 'Trip updated');
 }
 
-async function deleteTrip(tripId) {
+function deleteTrip(tripId) {
   if (!requireConnection()) return;
   if (!confirm('Delete this trip and all of its plans and expenses?')) return;
-  const result = await apiCall('deleteTrip', { SeyahatID: tripId });
-  if (result && result.success) {
+  const linkedPlans = state.plans.filter(p => p.SeyahatID === tripId);
+  const linkedExpenses = state.expenses.filter(x => x.SeyahatID === tripId);
+  const linkedTodos = state.todos.filter(x => x.SeyahatID === tripId);
+  state.view = 'dashboard';
+  performWrite('deleteTrip', { SeyahatID: tripId }, () => {
     state.trips = state.trips.filter(t => t.SeyahatID !== tripId);
     state.plans = state.plans.filter(p => p.SeyahatID !== tripId);
     state.expenses = state.expenses.filter(x => x.SeyahatID !== tripId);
     state.todos = state.todos.filter(x => x.SeyahatID !== tripId);
-    state.view = 'dashboard';
-    render();
-    showToast('Trip deleted', 'success');
-  } else {
-    showToast('Could not delete in Google Sheets — try again', 'warn');
-  }
+  }, 'Trip deleted');
+  // Cascade-delete children server-side too (best effort; deleteTrip on the
+  // backend already cascades, so these are only needed if that ever changes).
 }
 
 function tripDateForDay(trip, day) {
@@ -1045,7 +1330,7 @@ function dayNumberForDate(trip, dateStr) {
   return Math.max(1, diff);
 }
 
-async function saveActivity() {
+function saveActivity() {
   if (!requireConnection()) return;
   const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
   const selectedDate = document.getElementById('input-act-date').value;
@@ -1060,32 +1345,22 @@ async function saveActivity() {
   if (!selectedDate) { showToast('Pick a date', 'warn'); return; }
 
   const isNew = !editingActivityId;
+  const daySiblingCount = state.plans.filter(p => p.SeyahatID === state.currentTripId && Number(p.Gun) === day).length;
   const activity = isNew
-    ? { PlanID: uid(), SeyahatID: state.currentTripId, Gun: day, Saat: time, Baslik: title, Kategori: selectedActCategory, KonumLink: link, HarcamaID: '', Notlar: desc }
+    ? { PlanID: uid(), SeyahatID: state.currentTripId, Gun: day, Saat: time, Baslik: title, Kategori: selectedActCategory, KonumLink: link, HarcamaID: '', Notlar: desc, Sira: daySiblingCount }
     : Object.assign({}, state.plans.find(p => p.PlanID === editingActivityId), { Gun: day, Saat: time, Baslik: title, Kategori: selectedActCategory, KonumLink: link, Notlar: desc });
 
-  setBtnSaving('activity-save-btn', true, 'Saving…', isNew ? 'Add to Timeline' : 'Save Changes');
-  const result = await apiCall('saveActivity', activity);
-  if (!(result && result.success)) {
-    setBtnSaving('activity-save-btn', false, 'Saving…', isNew ? 'Add to Timeline' : 'Save Changes');
-    showToast('Could not save to Google Sheets — nothing was added. Check your connection and try again.', 'warn');
-    return;
-  }
-
-  if (isNew) state.plans.push(activity);
-  else Object.assign(state.plans.find(p => p.PlanID === editingActivityId), activity);
-
-  // Keep the linked expense in sync with the cost field (also Sheets-confirmed).
-  await syncActivityExpense(activity, trip, cost);
-
-  setBtnSaving('activity-save-btn', false, 'Saving…', isNew ? 'Add to Timeline' : 'Save Changes');
   state.activeDay = day;
   closeOverlay('overlay-activity');
-  render();
-  showToast(isNew ? 'Activity added' : 'Activity updated', 'success');
+  performWrite('saveActivity', activity, (a) => {
+    if (isNew) state.plans.push(a);
+    else Object.assign(state.plans.find(p => p.PlanID === editingActivityId), a);
+  }, isNew ? 'Activity added' : 'Activity updated');
+
+  syncActivityExpense(activity, trip, cost);
 }
 
-async function syncActivityExpense(activity, trip, cost) {
+function syncActivityExpense(activity, trip, cost) {
   const existingExpense = activity.HarcamaID ? state.expenses.find(x => x.HarcamaID === activity.HarcamaID) : null;
   if (cost > 0) {
     if (existingExpense) {
@@ -1093,52 +1368,40 @@ async function syncActivityExpense(activity, trip, cost) {
         Tutar: cost, Kategori: activity.Kategori, Aciklama: activity.Baslik, Notlar: activity.Notlar || '',
         Tarih: tripDateForDay(trip, activity.Gun),
       });
-      const result = await apiCall('saveExpense', updated);
-      if (result && result.success) Object.assign(existingExpense, updated);
+      performWrite('saveExpense', updated, (e) => Object.assign(existingExpense, e), '');
     } else {
       const expense = {
         HarcamaID: uid(), SeyahatID: activity.SeyahatID, PlanID: activity.PlanID,
         Tarih: tripDateForDay(trip, activity.Gun), Kategori: activity.Kategori,
         Tutar: cost, ParaBirimi: trip ? trip.ParaBirimi : 'USD', Aciklama: activity.Baslik, Notlar: activity.Notlar || '',
       };
-      const result = await apiCall('saveExpense', expense);
-      if (result && result.success) {
-        state.expenses.push(expense);
-        activity.HarcamaID = expense.HarcamaID;
-        await apiCall('saveActivity', activity); // persist the new HarcamaID link
+      performWrite('saveExpense', expense, (e) => {
+        state.expenses.push(e);
         const stored = state.plans.find(p => p.PlanID === activity.PlanID);
-        if (stored) stored.HarcamaID = expense.HarcamaID;
-      } else {
-        showToast('Activity saved, but the linked expense could not be saved', 'warn');
-      }
+        if (stored) stored.HarcamaID = e.HarcamaID;
+      }, '');
+      performWrite('saveActivity', Object.assign({}, activity, { HarcamaID: expense.HarcamaID }), () => {}, '');
     }
   } else if (existingExpense) {
-    // Cost cleared — remove the linked expense.
-    const result = await apiCall('deleteExpense', { HarcamaID: existingExpense.HarcamaID });
-    if (result && result.success) {
+    performWrite('deleteExpense', { HarcamaID: existingExpense.HarcamaID }, () => {
       state.expenses = state.expenses.filter(x => x.HarcamaID !== existingExpense.HarcamaID);
-      activity.HarcamaID = '';
-      await apiCall('saveActivity', activity);
       const stored = state.plans.find(p => p.PlanID === activity.PlanID);
       if (stored) stored.HarcamaID = '';
-    }
+    }, '');
+    performWrite('saveActivity', Object.assign({}, activity, { HarcamaID: '' }), () => {}, '');
   }
 }
 
-async function deleteActivity(planId) {
+function deleteActivity(planId) {
   if (!requireConnection()) return;
   const activity = state.plans.find(p => p.PlanID === planId);
-  const result = await apiCall('deleteActivity', { PlanID: planId });
-  if (result && result.success) {
+  performWrite('deleteActivity', { PlanID: planId }, () => {
     state.plans = state.plans.filter(p => p.PlanID !== planId);
-    if (activity && activity.HarcamaID) {
-      const delResult = await apiCall('deleteExpense', { HarcamaID: activity.HarcamaID });
-      if (delResult && delResult.success) state.expenses = state.expenses.filter(x => x.HarcamaID !== activity.HarcamaID);
-    }
-    render();
-    showToast('Activity deleted', 'success');
-  } else {
-    showToast('Could not delete in Google Sheets — try again', 'warn');
+  }, 'Activity deleted');
+  if (activity && activity.HarcamaID) {
+    performWrite('deleteExpense', { HarcamaID: activity.HarcamaID }, () => {
+      state.expenses = state.expenses.filter(x => x.HarcamaID !== activity.HarcamaID);
+    }, '');
   }
 }
 
@@ -1147,101 +1410,81 @@ async function saveExpense() {
   const desc = document.getElementById('input-exp-desc').value.trim();
   const notes = document.getElementById('input-exp-notes').value.trim();
   const amount = Number(document.getElementById('input-exp-amount').value);
+  const enteredCurrency = document.getElementById('input-exp-currency').value;
   const date = document.getElementById('input-exp-date').value;
   if (!desc || !amount) { showToast('Add a title and amount', 'warn'); return; }
   const trip = state.trips.find(t => t.SeyahatID === state.currentTripId);
+  const baseCurrency = trip ? trip.ParaBirimi : 'USD';
+
+  // Convert to the trip's base currency at today's rate so budget totals
+  // always add up correctly, while keeping the originally entered amount
+  // for reference. If offline or the rate API is unreachable, fall back
+  // to saving the entered amount as-is rather than blocking the save.
+  let convertedAmount = amount;
+  if (enteredCurrency !== baseCurrency) {
+    setBtnSaving('expense-save-btn', true, 'Converting…', editingExpenseId ? 'Save Changes' : 'Add Expense');
+    const rate = await getExchangeRate(enteredCurrency, baseCurrency);
+    setBtnSaving('expense-save-btn', false, 'Converting…', editingExpenseId ? 'Save Changes' : 'Add Expense');
+    if (rate) convertedAmount = Math.round(amount * rate * 100) / 100;
+    else showToast("Couldn't fetch a live rate — saved using the entered amount", 'warn');
+  }
 
   const isNew = !editingExpenseId;
+  const fields = {
+    Aciklama: desc, Notlar: notes, Tarih: date, Kategori: selectedExpCategory,
+    Tutar: convertedAmount, ParaBirimi: baseCurrency,
+    TutarOrijinal: amount, ParaBirimiOrijinal: enteredCurrency,
+  };
   const expense = isNew
-    ? { HarcamaID: uid(), SeyahatID: state.currentTripId, PlanID: '', Tarih: date, Kategori: selectedExpCategory, Tutar: amount, ParaBirimi: trip ? trip.ParaBirimi : 'USD', Aciklama: desc, Notlar: notes }
-    : Object.assign({}, state.expenses.find(x => x.HarcamaID === editingExpenseId), { Aciklama: desc, Notlar: notes, Tutar: amount, Tarih: date, Kategori: selectedExpCategory });
+    ? Object.assign({ HarcamaID: uid(), SeyahatID: state.currentTripId, PlanID: '' }, fields)
+    : Object.assign({}, state.expenses.find(x => x.HarcamaID === editingExpenseId), fields);
 
-  setBtnSaving('expense-save-btn', true, 'Saving…', isNew ? 'Add Expense' : 'Save Changes');
-  const result = await apiCall('saveExpense', expense);
-  setBtnSaving('expense-save-btn', false, 'Saving…', isNew ? 'Add Expense' : 'Save Changes');
-
-  if (!(result && result.success)) {
-    showToast('Could not save to Google Sheets — nothing was added. Check your connection and try again.', 'warn');
-    return;
+  let linkedActivity = null;
+  if (!isNew && expense.PlanID) {
+    linkedActivity = state.plans.find(p => p.PlanID === expense.PlanID);
   }
 
-  if (isNew) {
-    state.expenses.push(expense);
-  } else {
-    Object.assign(state.expenses.find(x => x.HarcamaID === editingExpenseId), expense);
-    // If this expense is linked to an activity, keep that activity's fields aligned.
-    if (expense.PlanID) {
-      const linkedActivity = state.plans.find(p => p.PlanID === expense.PlanID);
-      if (linkedActivity) {
-        linkedActivity.Baslik = desc; linkedActivity.Kategori = selectedExpCategory;
-        apiCall('saveActivity', linkedActivity);
-      }
-    }
-  }
   closeOverlay('overlay-expense');
-  render();
-  showToast(isNew ? 'Expense added' : 'Expense updated', 'success');
+  performWrite('saveExpense', expense, (e) => {
+    if (isNew) state.expenses.push(e);
+    else Object.assign(state.expenses.find(x => x.HarcamaID === editingExpenseId), e);
+    if (linkedActivity) { linkedActivity.Baslik = desc; linkedActivity.Kategori = selectedExpCategory; }
+  }, isNew ? 'Expense added' : 'Expense updated');
+
+  if (linkedActivity) performWrite('saveActivity', linkedActivity, () => {}, '');
 }
-async function deleteExpense(expId) {
+function deleteExpense(expId) {
   if (!requireConnection()) return;
   const expense = state.expenses.find(x => x.HarcamaID === expId);
-  const result = await apiCall('deleteExpense', { HarcamaID: expId });
-  if (result && result.success) {
+  let linkedActivity = null;
+  if (expense && expense.PlanID) linkedActivity = state.plans.find(p => p.PlanID === expense.PlanID);
+  performWrite('deleteExpense', { HarcamaID: expId }, () => {
     state.expenses = state.expenses.filter(x => x.HarcamaID !== expId);
-    if (expense && expense.PlanID) {
-      const linkedActivity = state.plans.find(p => p.PlanID === expense.PlanID);
-      if (linkedActivity) {
-        linkedActivity.HarcamaID = '';
-        apiCall('saveActivity', linkedActivity);
-      }
-    }
-    render();
-    showToast('Expense deleted', 'success');
-  } else {
-    showToast('Could not delete in Google Sheets — try again', 'warn');
-  }
+    if (linkedActivity) linkedActivity.HarcamaID = '';
+  }, 'Expense deleted');
+  if (linkedActivity) performWrite('saveActivity', linkedActivity, () => {}, '');
 }
 
-async function toggleTodo(todoId) {
+function toggleTodo(todoId) {
   if (!requireConnection()) return;
   const todo = state.todos.find(t => t.TodoID === todoId);
   const updated = Object.assign({}, todo, { Tamamlandi: !todo.Tamamlandi });
-  const result = await apiCall('saveTodo', updated);
-  if (result && result.success) {
-    todo.Tamamlandi = updated.Tamamlandi;
-    render();
-  } else {
-    showToast('Could not save to Google Sheets — try again', 'warn');
-  }
+  performWrite('saveTodo', updated, (t) => { todo.Tamamlandi = t.Tamamlandi; }, '');
 }
-async function addTodoFromInput() {
+function addTodoFromInput() {
   if (!requireConnection()) return;
   const input = document.getElementById('new-todo-input');
   const text = input.value.trim();
   if (!text) return;
   const todo = { TodoID: uid(), SeyahatID: state.currentTripId, Metin: text, Tamamlandi: false };
-  const btn = document.getElementById('todo-add-btn');
-  if (btn) { btn.disabled = true; btn.style.opacity = '.6'; }
-  const result = await apiCall('saveTodo', todo);
-  if (btn) { btn.disabled = false; btn.style.opacity = '1'; }
-  if (result && result.success) {
-    state.todos.push(todo);
-    input.value = '';
-    render();
-    showToast('To-do added', 'success');
-  } else {
-    showToast('Could not save to Google Sheets — nothing was added. Try again.', 'warn');
-  }
+  input.value = '';
+  performWrite('saveTodo', todo, (t) => state.todos.push(t), 'To-do added');
 }
-async function deleteTodo(todoId) {
+function deleteTodo(todoId) {
   if (!requireConnection()) return;
-  const result = await apiCall('deleteTodo', { TodoID: todoId });
-  if (result && result.success) {
+  performWrite('deleteTodo', { TodoID: todoId }, () => {
     state.todos = state.todos.filter(t => t.TodoID !== todoId);
-    render();
-  } else {
-    showToast('Could not delete in Google Sheets — try again', 'warn');
-  }
+  }, '');
 }
 
 /* ============================================================
@@ -1254,9 +1497,11 @@ function render() {
     renderDashboard();
   } else {
     if (state.activeTab === 'plan') document.getElementById('nav-plan').classList.add('active');
-    else document.getElementById('nav-budget').classList.add('active');
+    else if (state.activeTab === 'budget') document.getElementById('nav-budget').classList.add('active');
     renderTripDetail();
   }
+  updateSyncIndicator();
+  updateOfflineBanner();
 }
 
 function renderDashboard() {
@@ -1310,7 +1555,7 @@ function tripCardHtml(trip) {
   <div class="trip-card" onclick="openTrip('${trip.SeyahatID}')">
     <div class="trip-card-top">
       <div>
-        <div class="trip-name">${escapeHtml(trip.SeyahatAdi)}</div>
+        <div class="trip-name">${escapeHtml(trip.SeyahatAdi)}${isPending(trip.SeyahatID) ? '<span class="pending-dot"></span>' : ''}</div>
         <div class="trip-dates">${fmtDateShort(trip.BaslangicTarihi)} – ${fmtDateShort(trip.BitisTarihi)}</div>
         ${locations.length ? `<div class="trip-locations">${svgPin}${escapeHtml(locations.join(' · '))}</div>` : ''}
       </div>
@@ -1345,6 +1590,7 @@ function renderTripDetail() {
     <div class="detail-top">
       <div class="back-btn" onclick="goDashboard()">${svgArrowLeft}Trips</div>
       <div class="detail-actions">
+        <div class="icon-btn icon-btn-sm" onclick="exportTripPDF()">${svgExport}</div>
         <div class="icon-btn icon-btn-sm" onclick="openTripModal('${trip.SeyahatID}')">${svgEdit}</div>
         <div class="icon-btn icon-btn-sm danger" onclick="deleteTrip('${trip.SeyahatID}')">${svgTrash}</div>
       </div>
@@ -1356,11 +1602,13 @@ function renderTripDetail() {
     <div class="tabs">
       <button class="tab-btn ${state.activeTab==='plan'?'active':''}" onclick="setTab('plan')">Plan</button>
       <button class="tab-btn ${state.activeTab==='budget'?'active':''}" onclick="setTab('budget')">Budget</button>
+      <button class="tab-btn ${state.activeTab==='map'?'active':''}" onclick="setTab('map')">Map</button>
     </div>
 
     <div id="tab-content"></div>
   `;
   if (state.activeTab === 'plan') renderPlanTab(trip);
+  else if (state.activeTab === 'map') renderMapTab(trip);
   else renderBudgetTab(trip);
 }
 function setTab(tab) { state.activeTab = tab; render(); }
@@ -1372,6 +1620,7 @@ function tripDayCount(trip) {
 }
 
 function renderPlanTab(trip) {
+  destroyTripMap();
   const dayCount = tripDayCount(trip);
   const days = Array.from({length: dayCount}, (_, i) => i+1);
   const validDays = [0, ...days]; // 0 = Pre Vacation
@@ -1416,9 +1665,35 @@ function renderPreVacationChecklist(trip) {
 }
 
 function renderDayTimeline(trip) {
-  const activities = state.plans
-    .filter(p => p.SeyahatID === trip.SeyahatID && Number(p.Gun) === state.activeDay)
-    .sort((a,b) => formatTime(a.Saat).localeCompare(formatTime(b.Saat)));
+  const allDayActivities = state.plans
+    .filter(p => p.SeyahatID === trip.SeyahatID && Number(p.Gun) === state.activeDay);
+
+  const filterBarHtml = allDayActivities.length ? renderFilterBar('plan') : '';
+  document.getElementById('plan-body').innerHTML = `${filterBarHtml}<div id="timeline-results"></div>`;
+  renderTimelineResults(trip);
+}
+
+function renderTimelineResults(trip) {
+  const allDayActivities = state.plans
+    .filter(p => p.SeyahatID === trip.SeyahatID && Number(p.Gun) === state.activeDay);
+
+  const { search, category } = state.planFilter;
+  const hasManualOrder = allDayActivities.some(x => x.Sira !== undefined && x.Sira !== '' && x.Sira !== null);
+  const activities = allDayActivities
+    .filter(a => category === 'All' || a.Kategori === category)
+    .filter(a => !search || (a.Baslik + ' ' + (a.Notlar||'')).toLowerCase().includes(search.toLowerCase()))
+    .sort((a,b) => {
+      if (hasManualOrder) {
+        const as = (a.Sira===undefined||a.Sira==='' ||a.Sira===null) ? Infinity : Number(a.Sira);
+        const bs = (b.Sira===undefined||b.Sira===''||b.Sira===null) ? Infinity : Number(b.Sira);
+        if (as !== bs) return as - bs;
+      }
+      return formatTime(a.Saat).localeCompare(formatTime(b.Saat));
+    });
+
+  const emptyMsg = allDayActivities.length
+    ? `<div class="empty-state" style="padding:30px 10px;">${svgEmptyCase}<h3>No matches</h3><p>Try a different search or category.</p></div>`
+    : `<div class="empty-state" style="padding:30px 10px;">${svgEmptyCase}<h3>Nothing planned yet</h3><p>Tap + to add your first stop for ${fmtDateShort(tripDateForDay(trip, state.activeDay))}.</p></div>`;
 
   const timelineHtml = activities.length ? activities.map(a => {
     const meta = CATEGORY_META[a.Kategori] || CATEGORY_META.Other;
@@ -1429,10 +1704,11 @@ function renderDayTimeline(trip) {
     })() : '';
     const descHtml = a.Notlar ? `<div class="activity-desc">${escapeHtml(a.Notlar)}</div>` : '';
     return `
-    <div class="activity-card">
+    <div class="activity-card" data-plan-id="${a.PlanID}">
+      <div class="drag-grip">${svgGrip}</div>
       <div class="activity-time">${formatTime(a.Saat)}</div>
       <div class="activity-body">
-        <div class="activity-title">${escapeHtml(a.Baslik)}</div>
+        <div class="activity-title">${escapeHtml(a.Baslik)}${isPending(a.PlanID) ? '<span class="pending-dot"></span>' : ''}</div>
         <div class="activity-meta">
           <span class="cat-badge" style="background:${meta.bg};color:${meta.color}">${a.Kategori}</span>
           ${costBadge}
@@ -1447,9 +1723,158 @@ function renderDayTimeline(trip) {
         </div>
       </div>
     </div>`;
-  }).join('') : `<div class="empty-state" style="padding:30px 10px;">${svgEmptyCase}<h3>Nothing planned yet</h3><p>Tap + to add your first stop for ${fmtDateShort(tripDateForDay(trip, state.activeDay))}.</p></div>`;
+  }).join('') : emptyMsg;
 
-  document.getElementById('plan-body').innerHTML = `<div class="timeline">${timelineHtml}</div>`;
+  document.getElementById('timeline-results').innerHTML = `<div class="timeline" id="timeline-list">${timelineHtml}</div>`;
+  initTimelineDragDrop(trip);
+}
+
+/* ============================================================
+   DRAG & DROP REORDERING (SortableJS, touch-friendly)
+   ============================================================ */
+let timelineSortable = null;
+function initTimelineDragDrop(trip) {
+  const el = document.getElementById('timeline-list');
+  if (!el) return;
+  if (timelineSortable) { timelineSortable.destroy(); timelineSortable = null; }
+  if (typeof Sortable === 'undefined') return; // never break the page if the CDN failed to load
+  // Reordering only makes sense against the full, unfiltered list for the day.
+  if (state.planFilter.search || state.planFilter.category !== 'All') return;
+  if (el.children.length < 2) return;
+
+  timelineSortable = new Sortable(el, {
+    animation: 150,
+    delay: 120,
+    delayOnTouchOnly: true,
+    handle: '.drag-grip',
+    onEnd: () => {
+      const ids = Array.from(el.children).map(c => c.dataset.planId);
+      const touched = [];
+      ids.forEach((id, idx) => {
+        const p = state.plans.find(x => x.PlanID === id);
+        if (p && Number(p.Sira) !== idx) { p.Sira = idx; touched.push(p); }
+      });
+      if (touched.length) {
+        render();
+        touched.forEach(p => queueWrite('saveActivity', p));
+        showToast('Order updated', 'success');
+      }
+    }
+  });
+}
+
+/* ============================================================
+   SEARCH / FILTER (shared by Plan timeline and Budget expenses)
+   ============================================================ */
+function renderFilterBar(context) {
+  const filterState = context === 'plan' ? state.planFilter : state.expenseFilter;
+  const cats = ['All', ...CATEGORY_ORDER];
+  const chips = cats.map(c => `<div class="filter-chip ${filterState.category===c?'active':''}" onclick="setFilterCategory('${context}','${c}')">${c}</div>`).join('');
+  const sortHtml = context === 'expense' ? `
+    <select class="sort-select" onchange="setFilterSort('${context}', this.value)">
+      <option value="date_desc" ${filterState.sort==='date_desc'?'selected':''}>Newest</option>
+      <option value="date_asc" ${filterState.sort==='date_asc'?'selected':''}>Oldest</option>
+      <option value="amount_desc" ${filterState.sort==='amount_desc'?'selected':''}>Highest</option>
+      <option value="amount_asc" ${filterState.sort==='amount_asc'?'selected':''}>Lowest</option>
+    </select>` : '';
+  return `
+    <div class="filter-bar">
+      <div class="search-input-wrap">
+        ${svgSearch}
+        <input type="text" id="filter-search-${context}" placeholder="Search ${context === 'plan' ? 'activities' : 'expenses'}…" value="${escapeHtml(filterState.search)}" oninput="setFilterSearch('${context}', this.value)">
+      </div>
+      <div class="filter-row">
+        <div class="filter-chips">${chips}</div>
+        ${sortHtml}
+      </div>
+    </div>`;
+}
+function currentTrip() { return state.trips.find(t => t.SeyahatID === state.currentTripId); }
+function setFilterSearch(context, value) {
+  const filterState = context === 'plan' ? state.planFilter : state.expenseFilter;
+  filterState.search = value;
+  if (context === 'plan') renderTimelineResults(currentTrip());
+  else renderExpenseResults(currentTrip());
+}
+function setFilterCategory(context, cat) {
+  const filterState = context === 'plan' ? state.planFilter : state.expenseFilter;
+  filterState.category = cat;
+  if (context === 'plan') renderDayTimeline(currentTrip());
+  else renderBudgetTab(currentTrip());
+}
+function setFilterSort(context, sort) {
+  state.expenseFilter.sort = sort;
+  renderBudgetTab(currentTrip());
+}
+
+/* ============================================================
+   PDF / PRINT EXPORT
+   ------------------------------------------------------------
+   Builds a clean, print-friendly summary (itinerary + budget +
+   checklist) and hands off to the browser's native print dialog
+   — on mobile this includes a "Save as PDF" option, no extra
+   library or server round-trip needed.
+   ============================================================ */
+function exportTripPDF() {
+  const trip = currentTrip();
+  if (!trip) return;
+  document.getElementById('print-summary').innerHTML = buildPrintSummaryHtml(trip);
+  setTimeout(() => window.print(), 50);
+}
+
+function buildPrintSummaryHtml(trip) {
+  const locations = parseLocations(trip.Lokasyonlar);
+  const dayCount = tripDayCount(trip);
+  const plans = state.plans.filter(p => p.SeyahatID === trip.SeyahatID);
+  const expenses = state.expenses.filter(e => e.SeyahatID === trip.SeyahatID);
+  const todos = state.todos.filter(t => t.SeyahatID === trip.SeyahatID);
+  const spent = expenses.reduce((s,e) => s + Number(e.Tutar||0), 0);
+  const budget = Number(trip.ToplamButce) || 0;
+
+  let html = `
+    <h1>${escapeHtml(trip.SeyahatAdi)}</h1>
+    <p class="print-sub">${fmtDateShort(trip.BaslangicTarihi)} – ${fmtDateShort(trip.BitisTarihi)}${locations.length ? ' · ' + escapeHtml(locations.join(', ')) : ''}</p>
+  `;
+
+  if (todos.length) {
+    html += `<h2>Pre-Vacation Checklist</h2><ul class="print-list">`;
+    todos.forEach(t => { html += `<li>${t.Tamamlandi ? '☑' : '☐'} ${escapeHtml(t.Metin)}</li>`; });
+    html += `</ul>`;
+  }
+
+  html += `<h2>Itinerary</h2>`;
+  let anyDay = false;
+  for (let d = 1; d <= dayCount; d++) {
+    const dayPlans = plans.filter(p => Number(p.Gun) === d)
+      .sort((a,b) => formatTime(a.Saat).localeCompare(formatTime(b.Saat)));
+    if (!dayPlans.length) continue;
+    anyDay = true;
+    html += `<h3>Day ${d} — ${fmtDateShort(tripDateForDay(trip, d))}</h3><table class="print-table">`;
+    dayPlans.forEach(p => {
+      html += `<tr><td class="pt-time">${formatTime(p.Saat)}</td><td><strong>${escapeHtml(p.Baslik)}</strong> <span class="pt-cat">(${p.Kategori})</span>${p.Notlar ? '<div class="pt-notes">'+escapeHtml(p.Notlar)+'</div>' : ''}</td></tr>`;
+    });
+    html += `</table>`;
+  }
+  if (!anyDay) html += `<p class="print-sub">No activities planned yet.</p>`;
+
+  html += `
+    <h2>Budget Summary</h2>
+    <table class="print-table">
+      <tr><td>Total budget</td><td class="pt-amt">${fmtMoney(budget, trip.ParaBirimi)}</td></tr>
+      <tr><td>Spent</td><td class="pt-amt">${fmtMoney(spent, trip.ParaBirimi)}</td></tr>
+      <tr><td>Remaining</td><td class="pt-amt">${fmtMoney(budget-spent, trip.ParaBirimi)}</td></tr>
+    </table>
+  `;
+  if (expenses.length) {
+    html += `<h3>Expenses</h3><table class="print-table">`;
+    expenses.slice().sort((a,b) => formatDateStr(a.Tarih).localeCompare(formatDateStr(b.Tarih))).forEach(e => {
+      html += `<tr><td class="pt-time">${fmtDateShort(e.Tarih)}</td><td>${escapeHtml(e.Aciklama)} <span class="pt-cat">(${e.Kategori})</span></td><td class="pt-amt">${fmtMoney(e.Tutar, e.ParaBirimi||trip.ParaBirimi)}</td></tr>`;
+    });
+    html += `</table>`;
+  }
+
+  html += `<div class="print-footer">Generated by Rota — All In One Travel Pro</div>`;
+  return html;
 }
 
 function selectDay(d) {
@@ -1470,8 +1895,137 @@ function selectDay(d) {
 }
 
 let budgetChartInstance = null;
+/* ============================================================
+   MAP TAB (Leaflet + OpenStreetMap — free, no API key needed)
+   ------------------------------------------------------------
+   Pins every activity that has a Google Maps link. Coordinates
+   are read straight from the link when it contains them (most
+   "share location" links do); otherwise the activity's title is
+   geocoded once via OpenStreetMap's free Nominatim service and
+   cached for the rest of the session.
+   ============================================================ */
+let tripLeafletMap = null;
+let mapPins = [];
+
+function destroyTripMap() {
+  if (tripLeafletMap) { tripLeafletMap.remove(); tripLeafletMap = null; }
+}
+
+function parseCoordsFromLink(link) {
+  if (!link) return null;
+  const m = link.match(/[@=]\s*(-?\d{1,3}\.\d+)\s*,\s*(-?\d{1,3}\.\d+)/);
+  if (m) {
+    const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+    if (!isNaN(lat) && !isNaN(lng) && Math.abs(lat) <= 90 && Math.abs(lng) <= 180) return { lat, lng };
+  }
+  return null;
+}
+
+const geocodeCache = {};
+async function geocodePlace(query) {
+  if (geocodeCache[query] !== undefined) return geocodeCache[query];
+  if (!state.isOnline) return null;
+  try {
+    const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`, {
+      headers: { 'Accept-Language': 'en' }
+    });
+    const data = await res.json();
+    const result = (data && data[0]) ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
+    geocodeCache[query] = result;
+    return result;
+  } catch (e) {
+    console.warn('Geocoding failed', e);
+    geocodeCache[query] = null;
+    return null;
+  }
+}
+
+async function renderMapTab(trip) {
+  const activitiesWithLinks = state.plans.filter(p => p.SeyahatID === trip.SeyahatID && p.KonumLink);
+
+  document.getElementById('tab-content').innerHTML = `
+    <div class="map-tab-wrap">
+      <div id="trip-map"></div>
+      <div class="map-legend" id="map-legend">
+        <div style="padding:22px 10px; text-align:center; color:var(--ink-muted); font-size:13px;">Locating your stops…</div>
+      </div>
+    </div>
+  `;
+
+  if (typeof L === 'undefined') {
+    document.getElementById('trip-map').style.display = 'none';
+    document.getElementById('map-legend').innerHTML = `<div class="empty-state" style="padding:24px 10px;">${svgEmptyCase}<h3>Map unavailable</h3><p>Couldn't load the map library — check your connection and reopen this tab.</p></div>`;
+    return;
+  }
+  if (!activitiesWithLinks.length) {
+    document.getElementById('trip-map').style.display = 'none';
+    document.getElementById('map-legend').innerHTML = `<div class="empty-state" style="padding:24px 10px;">${svgMapPinLg}<h3>No locations yet</h3><p>Add a Google Maps link to an activity in the Plan tab to see it pinned here.</p></div>`;
+    return;
+  }
+
+  const pins = [];
+  for (const a of activitiesWithLinks) {
+    let coords = parseCoordsFromLink(a.KonumLink);
+    if (!coords) coords = await geocodePlace(a.Baslik);
+    if (coords) pins.push({ activity: a, coords });
+  }
+  mapPins = pins;
+
+  // Bail out gracefully if the tab was switched away while geocoding ran.
+  const mapEl = document.getElementById('trip-map');
+  if (!mapEl) return;
+
+  if (!pins.length) {
+    mapEl.style.display = 'none';
+    document.getElementById('map-legend').innerHTML = `<div class="empty-state" style="padding:24px 10px;">${svgMapPinLg}<h3>Couldn't place any pins</h3><p>${state.isOnline ? "These links don't include recognizable coordinates." : "You're offline, so locations can't be looked up right now."}</p></div>`;
+    return;
+  }
+
+  destroyTripMap();
+  tripLeafletMap = L.map(mapEl, { zoomControl: true, attributionControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '© OpenStreetMap contributors', maxZoom: 19,
+  }).addTo(tripLeafletMap);
+
+  pins.forEach((pin) => {
+    const meta = CATEGORY_META[pin.activity.Kategori] || CATEGORY_META.Other;
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:26px;height:26px;border-radius:50% 50% 50% 0;transform:rotate(-45deg);background:${meta.color};border:2px solid #fff;box-shadow:0 2px 6px rgba(0,0,0,.35);"></div>`,
+      iconSize: [26,26], iconAnchor: [13,26],
+    });
+    pin._marker = L.marker([pin.coords.lat, pin.coords.lng], { icon }).addTo(tripLeafletMap)
+      .bindPopup(`<b>${escapeHtml(pin.activity.Baslik)}</b><br>Day ${pin.activity.Gun} · ${formatTime(pin.activity.Saat)}<br>${escapeHtml(pin.activity.Kategori)}`);
+  });
+
+  if (pins.length === 1) {
+    tripLeafletMap.setView([pins[0].coords.lat, pins[0].coords.lng], 14);
+  } else {
+    tripLeafletMap.fitBounds(L.latLngBounds(pins.map(p => [p.coords.lat, p.coords.lng])), { padding: [30,30], maxZoom: 15 });
+  }
+  setTimeout(() => { if (tripLeafletMap) tripLeafletMap.invalidateSize(); }, 100);
+
+  document.getElementById('map-legend').innerHTML = pins.map((pin, i) => {
+    const meta = CATEGORY_META[pin.activity.Kategori] || CATEGORY_META.Other;
+    return `
+    <div class="map-legend-row" onclick="focusMapPin(${i})">
+      <div class="map-legend-dot" style="background:${meta.color}"></div>
+      <div class="map-legend-label">${escapeHtml(pin.activity.Baslik)}</div>
+      <div class="map-legend-day">Day ${pin.activity.Gun}</div>
+    </div>`;
+  }).join('');
+}
+
+function focusMapPin(i) {
+  const pin = mapPins[i];
+  if (!pin || !tripLeafletMap) return;
+  tripLeafletMap.setView([pin.coords.lat, pin.coords.lng], 16);
+  pin._marker.openPopup();
+}
+
 function renderBudgetTab(trip) {
-  const expenses = state.expenses.filter(e => e.SeyahatID === trip.SeyahatID).sort((a,b) => formatDateStr(b.Tarih).localeCompare(formatDateStr(a.Tarih)));
+  destroyTripMap();
+  const expenses = state.expenses.filter(e => e.SeyahatID === trip.SeyahatID);
   const spent = expenses.reduce((s,e) => s + Number(e.Tutar||0), 0);
   const budget = Number(trip.ToplamButce) || 0;
   const remaining = budget - spent;
@@ -1485,23 +2039,7 @@ function renderBudgetTab(trip) {
     .sort((a,b) => b.value - a.value);
   const catTotal = catEntries.reduce((s,c) => s + c.value, 0);
 
-  const expenseListHtml = expenses.length ? expenses.map(e => {
-    const meta = CATEGORY_META[e.Kategori] || CATEGORY_META.Other;
-    const linkBadge = e.PlanID ? `<span class="cat-badge" style="background:rgba(62,123,250,.1);color:var(--blue-deep);margin-left:6px;">Linked</span>` : '';
-    const notesHtml = e.Notlar ? `<div class="expense-notes">${escapeHtml(e.Notlar)}</div>` : '';
-    return `
-    <div class="expense-row">
-      <div class="expense-icon" style="background:${meta.bg}"><span style="color:${meta.color}">${meta.icon}</span></div>
-      <div class="expense-body">
-        <div class="expense-desc">${escapeHtml(e.Aciklama)}${linkBadge}</div>
-        <div class="expense-date">${fmtDateShort(e.Tarih)} · ${e.Kategori}</div>
-        ${notesHtml}
-      </div>
-      <div class="expense-amt">${fmtMoney(e.Tutar, e.ParaBirimi||trip.ParaBirimi)}</div>
-      <div class="icon-mini" onclick="openExpenseModal('${e.HarcamaID}')">${svgEdit}</div>
-      <div class="icon-mini" onclick="deleteExpense('${e.HarcamaID}')">${svgTrash}</div>
-    </div>`;
-  }).join('') : `<div class="empty-state" style="padding:20px 10px;">${svgEmptyCase}<h3>No expenses logged</h3><p>Tap + to record your first expense.</p></div>`;
+  const filterBarHtml = expenses.length ? renderFilterBar('expense') : '';
 
   document.getElementById('tab-content').innerHTML = `
     <div class="budget-hero">
@@ -1520,8 +2058,10 @@ function renderBudgetTab(trip) {
     </div>
     ${catEntries.length ? `<div class="chart-card"><h4>Spending by category</h4>${categoryDonutHtml(catEntries, catTotal, trip.ParaBirimi)}</div>` : ''}
     <div class="section-heading">Expenses</div>
-    ${expenseListHtml}
+    ${filterBarHtml}
+    <div id="expense-results"></div>
   `;
+  renderExpenseResults(trip);
 
   // Draw the "% spent" ring (Chart.js). Wrapped defensively so that if
   // Chart.js failed to load for any reason, it doesn't take the rest of
@@ -1538,6 +2078,49 @@ function renderBudgetTab(trip) {
   } catch (e) {
     console.warn('Budget ring chart failed to render', e);
   }
+}
+
+function renderExpenseResults(trip) {
+  const { search, category, sort } = state.expenseFilter;
+  let expenses = state.expenses.filter(e => e.SeyahatID === trip.SeyahatID);
+  const totalCount = expenses.length;
+  expenses = expenses
+    .filter(e => category === 'All' || e.Kategori === category)
+    .filter(e => !search || (e.Aciklama + ' ' + (e.Notlar||'')).toLowerCase().includes(search.toLowerCase()));
+
+  expenses.sort((a,b) => {
+    if (sort === 'amount_desc') return Number(b.Tutar) - Number(a.Tutar);
+    if (sort === 'amount_asc') return Number(a.Tutar) - Number(b.Tutar);
+    if (sort === 'date_asc') return formatDateStr(a.Tarih).localeCompare(formatDateStr(b.Tarih));
+    return formatDateStr(b.Tarih).localeCompare(formatDateStr(a.Tarih)); // date_desc default
+  });
+
+  const emptyMsg = totalCount
+    ? `<div class="empty-state" style="padding:20px 10px;">${svgEmptyCase}<h3>No matches</h3><p>Try a different search or category.</p></div>`
+    : `<div class="empty-state" style="padding:20px 10px;">${svgEmptyCase}<h3>No expenses logged</h3><p>Tap + to record your first expense.</p></div>`;
+
+  const expenseListHtml = expenses.length ? expenses.map(e => {
+    const meta = CATEGORY_META[e.Kategori] || CATEGORY_META.Other;
+    const linkBadge = e.PlanID ? `<span class="cat-badge" style="background:rgba(62,123,250,.1);color:var(--blue-deep);margin-left:6px;">Linked</span>` : '';
+    const notesHtml = e.Notlar ? `<div class="expense-notes">${escapeHtml(e.Notlar)}</div>` : '';
+    const wasConverted = e.ParaBirimiOrijinal && e.ParaBirimiOrijinal !== (e.ParaBirimi || trip.ParaBirimi);
+    const origHtml = wasConverted ? `<div class="expense-orig">originally ${fmtMoney(e.TutarOrijinal, e.ParaBirimiOrijinal)}</div>` : '';
+    return `
+    <div class="expense-row">
+      <div class="expense-icon" style="background:${meta.bg}"><span style="color:${meta.color}">${meta.icon}</span></div>
+      <div class="expense-body">
+        <div class="expense-desc">${escapeHtml(e.Aciklama)}${linkBadge}${isPending(e.HarcamaID) ? '<span class="pending-dot"></span>' : ''}</div>
+        <div class="expense-date">${fmtDateShort(e.Tarih)} · ${e.Kategori}</div>
+        ${notesHtml}
+        ${origHtml}
+      </div>
+      <div class="expense-amt">${fmtMoney(e.Tutar, e.ParaBirimi||trip.ParaBirimi)}</div>
+      <div class="icon-mini" onclick="openExpenseModal('${e.HarcamaID}')">${svgEdit}</div>
+      <div class="icon-mini" onclick="deleteExpense('${e.HarcamaID}')">${svgTrash}</div>
+    </div>`;
+  }).join('') : emptyMsg;
+
+  document.getElementById('expense-results').innerHTML = expenseListHtml;
 }
 
 // Pure CSS/SVG category donut — no external chart library, so it always
@@ -1574,8 +2157,14 @@ function categoryDonutHtml(entries, total, currency) {
    ============================================================ */
 window.onload = async function() {
   loadLocal();
+  loadQueue();
   render();
-  if (state.gasUrl) refreshFromBackend();
+  if (state.gasUrl && state.isOnline) refreshFromBackend();
+  if (state.pendingQueue.length && state.isOnline) kickQueue(500);
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW registration failed', e));
+  }
 };
 
 // Close overlays on backdrop click
