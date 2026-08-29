@@ -18,6 +18,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
 :root{
   --bg:#EEF2FB;
@@ -254,6 +255,10 @@ body{
 .field-row{display:flex; gap:10px;}
 .field-row .field{flex:1;}
 .conversion-preview{font-size:12px; color:var(--blue-deep); font-weight:600; margin:-8px 0 14px; min-height:16px;}
+.receipt-scan-row{display:flex; gap:8px; margin-bottom:6px;}
+.receipt-scan-status{font-size:12px; color:var(--ink-muted); line-height:1.4; margin-bottom:14px; min-height:14px;}
+.receipt-scan-status.success{color:var(--success); font-weight:600;}
+.receipt-scan-status.error{color:var(--danger); font-weight:600;}
 
 .location-row{display:flex; align-items:center; gap:8px; margin-bottom:8px;}
 .location-row input{flex:1;}
@@ -670,6 +675,16 @@ body{
       <div class="sheet-handle"></div>
       <div class="sheet-title" id="expense-modal-title">Add Expense</div>
       <div class="sheet-sub" id="expense-modal-sub">Log a purchase to keep your budget accurate.</div>
+
+      <div class="receipt-scan-row">
+        <button type="button" class="btn btn-secondary btn-sm" id="receipt-scan-btn" style="flex:1" onclick="document.getElementById('receipt-file-input').click()">
+          <svg viewBox="0 0 24 24" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path><circle cx="12" cy="13" r="4"></circle></svg>
+          Scan a Receipt
+        </button>
+        <input type="file" id="receipt-file-input" accept="image/*" capture="environment" style="display:none" onchange="handleReceiptFile(this.files[0])">
+      </div>
+      <div class="receipt-scan-status" id="receipt-scan-status"></div>
+
       <div class="field">
         <label>Title</label>
         <input type="text" id="input-exp-desc" placeholder="e.g. Airport taxi">
@@ -818,23 +833,115 @@ function formatDateStr(value) {
 }
 
 /* ============================================================
+   INDEXEDDB — full local cache + durable sync queue
+   ------------------------------------------------------------
+   Every trip/plan/expense/todo Google Sheets ever sends us is
+   mirrored into IndexedDB, and every offline write goes there
+   too. This means the app boots straight from local data (never
+   a blank screen, even with zero signal) and nothing is ever
+   lost — it just syncs in the background once connected. The
+   only things left in localStorage are the Apps Script URL and
+   nothing else; all real data now lives in IndexedDB.
+   ============================================================ */
+const IDB_NAME = 'RotaDB';
+const IDB_VERSION = 1;
+let idbPromise = null;
+
+function openIDB() {
+  if (idbPromise) return idbPromise;
+  idbPromise = new Promise((resolve) => {
+    if (!('indexedDB' in window)) { resolve(null); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains('trips')) db.createObjectStore('trips', { keyPath: 'SeyahatID' });
+      if (!db.objectStoreNames.contains('plans')) db.createObjectStore('plans', { keyPath: 'PlanID' });
+      if (!db.objectStoreNames.contains('expenses')) db.createObjectStore('expenses', { keyPath: 'HarcamaID' });
+      if (!db.objectStoreNames.contains('todos')) db.createObjectStore('todos', { keyPath: 'TodoID' });
+      if (!db.objectStoreNames.contains('queue')) db.createObjectStore('queue', { keyPath: 'qid' });
+    };
+    req.onsuccess = (e) => resolve(e.target.result);
+    req.onerror = () => resolve(null); // degrade gracefully — app still works without IDB
+  });
+  return idbPromise;
+}
+async function idbGetAll(store) {
+  const db = await openIDB();
+  if (!db) return [];
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => resolve([]);
+    } catch (e) { resolve([]); }
+  });
+}
+async function idbPut(store, record) {
+  const db = await openIDB();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).put(record);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch (e) { resolve(); }
+  });
+}
+async function idbDelete(store, key) {
+  const db = await openIDB();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      tx.objectStore(store).delete(key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch (e) { resolve(); }
+  });
+}
+async function idbReplaceAll(store, records) {
+  const db = await openIDB();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      os.clear();
+      records.forEach(r => os.put(r));
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch (e) { resolve(); }
+  });
+}
+
+const ACTION_STORE_MAP = {
+  saveTrip: { store: 'trips', idField: 'SeyahatID' },
+  deleteTrip: { store: 'trips', idField: 'SeyahatID' },
+  saveActivity: { store: 'plans', idField: 'PlanID' },
+  deleteActivity: { store: 'plans', idField: 'PlanID' },
+  saveExpense: { store: 'expenses', idField: 'HarcamaID' },
+  deleteExpense: { store: 'expenses', idField: 'HarcamaID' },
+  saveTodo: { store: 'todos', idField: 'TodoID' },
+  deleteTodo: { store: 'todos', idField: 'TodoID' },
+};
+
+/* ============================================================
    STATE INIT
    ------------------------------------------------------------
-   Trip/Plan/Expense/Todo data itself is never cached wholesale —
-   Google Sheets stays the single source of truth, which avoids
-   sync conflicts across devices. The ONLY things ever written to
-   localStorage are: the Apps Script URL (key: travelProUrl) and
-   a small queue of not-yet-synced writes (key: travelProQueue),
-   used only to survive going offline — see OFFLINE QUEUE below.
+   On boot we read IndexedDB FIRST (near-instant, works offline)
+   so the UI is populated immediately, then refresh from Google
+   Sheets in the background if we're online.
    ============================================================ */
-function loadLocal() {
-  state.trips = [];
-  state.plans = [];
-  state.expenses = [];
-  state.todos = [];
-}
-function saveLocal() {
-  // Intentionally a no-op: nothing but the URL + sync queue persist.
+async function loadLocal() {
+  const [trips, plans, expenses, todos, queue] = await Promise.all([
+    idbGetAll('trips'), idbGetAll('plans'), idbGetAll('expenses'), idbGetAll('todos'), idbGetAll('queue'),
+  ]);
+  state.trips = trips;
+  state.plans = plans;
+  state.expenses = expenses;
+  state.todos = todos;
+  state.pendingQueue = (queue || []).sort((a,b) => a.ts - b.ts);
 }
 
 /* ============================================================
@@ -892,19 +999,41 @@ async function apiGet(action, opts) {
   console.warn('API get failed after retries', lastErr);
   return { success: false, error: (lastErr && lastErr.message) || 'network_error' };
 }
+
+/* Merge a freshly-fetched server list with what's currently in memory:
+   any record with a write still sitting in the pending queue is NOT yet
+   confirmed on the server, so we keep our local copy of it instead of
+   letting a (possibly stale) server row overwrite it. Everything else —
+   including changes made from OTHER devices — comes straight from the
+   server, which is how multi-device sync stays correct. */
+function mergeServerList(serverList, localList, idField) {
+  const pendingIds = new Set(state.pendingQueue.map(entityIdOf).filter(Boolean));
+  const localById = {};
+  localList.forEach(l => { localById[l[idField]] = l; });
+  const merged = serverList.map(s => (pendingIds.has(s[idField]) && localById[s[idField]]) ? localById[s[idField]] : s);
+  localList.forEach(l => {
+    if (pendingIds.has(l[idField]) && !serverList.some(s => s[idField] === l[idField])) merged.push(l);
+  });
+  return merged;
+}
+
 async function refreshFromBackend() {
   if (!state.gasUrl) return;
-  if (!state.isOnline) { showToast("You're offline — showing what's already loaded", 'warn'); return; }
-  showToast('Syncing with Google Sheets…', 'loading');
+  if (!state.isOnline) return;
   const result = await apiGet('getData');
   if (result && result.success) {
-    state.trips = result.trips || [];
-    state.plans = result.plans || [];
-    state.expenses = result.expenses || [];
-    state.todos = result.todos || [];
-    showToast('Synced', 'success');
+    state.trips = mergeServerList(result.trips || [], state.trips, 'SeyahatID');
+    state.plans = mergeServerList(result.plans || [], state.plans, 'PlanID');
+    state.expenses = mergeServerList(result.expenses || [], state.expenses, 'HarcamaID');
+    state.todos = mergeServerList(result.todos || [], state.todos, 'TodoID');
+    await Promise.all([
+      idbReplaceAll('trips', state.trips),
+      idbReplaceAll('plans', state.plans),
+      idbReplaceAll('expenses', state.expenses),
+      idbReplaceAll('todos', state.todos),
+    ]);
     render();
-  } else {
+  } else if (result) {
     showToast(friendlyError(result), 'warn');
   }
 }
@@ -912,20 +1041,13 @@ async function refreshFromBackend() {
 /* ============================================================
    OFFLINE QUEUE
    ------------------------------------------------------------
-   Every write is applied to the UI immediately, then queued and
-   flushed to Google Sheets in the background — in order, with
-   automatic retry. This means the app is fully usable with no
-   signal (e.g. mid-flight, roaming abroad): nothing is lost,
-   it just syncs as soon as a connection is available again.
+   Every write is applied to the UI (and IndexedDB) immediately,
+   then queued and flushed to Google Sheets in the background —
+   in order, with automatic retry. This means the app is fully
+   usable with no signal (e.g. mid-flight, roaming abroad):
+   nothing is lost, it just syncs as soon as a connection is
+   available again — see performWrite below.
    ============================================================ */
-function loadQueue() {
-  try { state.pendingQueue = JSON.parse(localStorage.getItem('travelProQueue') || '[]'); }
-  catch (e) { state.pendingQueue = []; }
-}
-function saveQueueToDisk() {
-  try { localStorage.setItem('travelProQueue', JSON.stringify(state.pendingQueue)); }
-  catch (e) { console.warn('Could not persist sync queue', e); }
-}
 function entityIdOf(item) {
   const d = item.data || {};
   return d.SeyahatID || d.PlanID || d.HarcamaID || d.TodoID || null;
@@ -936,7 +1058,7 @@ function isPending(id) {
 function queueWrite(action, data) {
   const item = { qid: uid(), action, data: JSON.parse(JSON.stringify(data)), attempts: 0, ts: Date.now() };
   state.pendingQueue.push(item);
-  saveQueueToDisk();
+  idbPut('queue', item);
   kickQueue(0);
   return item;
 }
@@ -958,11 +1080,11 @@ async function processQueue() {
     const result = await apiCall(item.action, item.data, { retries: 1 });
     if (result && result.success) {
       state.pendingQueue.shift();
-      saveQueueToDisk();
+      idbDelete('queue', item.qid);
       render();
     } else {
       item.attempts = (item.attempts || 0) + 1;
-      saveQueueToDisk();
+      idbPut('queue', item);
       if (item.attempts === 5) {
         showToast('A change is stuck syncing — ' + friendlyError(result), 'warn');
       }
@@ -989,6 +1111,7 @@ function goOnline() {
   state.isOnline = true;
   updateOfflineBanner();
   showToast('Back online — syncing…', 'success');
+  refreshFromBackend();
   kickQueue(0);
 }
 function goOffline() {
@@ -1002,13 +1125,23 @@ function updateOfflineBanner() {
   el.classList.toggle('show', !state.isOnline);
 }
 
-/* A single write path used by every save/delete below: apply optimistically,
-   queue for Sheets, and let processQueue retry in the background. */
+/* A single write path used by every save/delete below: stamp a timestamp
+   (used for cross-device last-write-wins conflict resolution), apply
+   optimistically to the UI + IndexedDB, then queue for Google Sheets and
+   let processQueue retry in the background. */
 function performWrite(action, data, apply, successMsg) {
+  data.GuncellemeZamani = Date.now();
   apply(data);
   render();
+
+  const map = ACTION_STORE_MAP[action];
+  if (map) {
+    if (action.indexOf('delete') === 0) idbDelete(map.store, data[map.idField]);
+    else idbPut(map.store, data);
+  }
+
   queueWrite(action, data);
-  showToast(state.isOnline ? successMsg : 'Saved offline — will sync automatically', state.isOnline ? 'success' : 'warn');
+  if (successMsg) showToast(state.isOnline ? successMsg : 'Saved offline — will sync automatically', state.isOnline ? 'success' : 'warn');
 }
 
 /* ============================================================
@@ -1196,10 +1329,128 @@ function openExpenseModal(expId) {
   document.getElementById('input-exp-currency').value = e ? (e.ParaBirimiOrijinal || e.ParaBirimi || baseCurrency) : baseCurrency;
   document.getElementById('input-exp-date').value = e ? formatDateStr(e.Tarih) : new Date().toISOString().slice(0,10);
   document.getElementById('conversion-preview').textContent = '';
+  document.getElementById('receipt-scan-status').textContent = '';
+  document.getElementById('receipt-scan-status').className = 'receipt-scan-status';
+  document.getElementById('receipt-file-input').value = '';
   selectedExpCategory = e ? (e.Kategori || 'Food') : 'Food';
   renderCategoryChips('exp-category-select', selectedExpCategory, (c) => selectedExpCategory = c, CATEGORY_ORDER);
   openOverlay('overlay-expense');
   updateConversionPreview();
+}
+
+/* ============================================================
+   RECEIPT SCANNING (Tesseract.js OCR, fully client-side/free)
+   ------------------------------------------------------------
+   Reads a photographed/uploaded receipt, extracts a vendor name,
+   total amount, and date with a few pragmatic regex heuristics,
+   and pre-fills the Add Expense form. The user always reviews
+   and confirms before saving — nothing is auto-submitted.
+   ============================================================ */
+function setReceiptStatus(msg, kind) {
+  const el = document.getElementById('receipt-scan-status');
+  el.textContent = msg;
+  el.className = 'receipt-scan-status' + (kind ? ' ' + kind : '');
+}
+
+async function handleReceiptFile(file) {
+  if (!file) return;
+  const btn = document.getElementById('receipt-scan-btn');
+
+  if (typeof Tesseract === 'undefined') {
+    setReceiptStatus("Couldn't load the scanner — check your connection, or just fill in the details manually.", 'error');
+    return;
+  }
+
+  btn.disabled = true;
+  btn.style.opacity = '.6';
+  setReceiptStatus('Reading your receipt… this can take a few seconds.');
+
+  try {
+    const { data: { text } } = await Tesseract.recognize(file, 'eng');
+    const parsed = parseReceiptText(text);
+
+    let filledAny = false;
+    if (parsed.title) { document.getElementById('input-exp-desc').value = parsed.title; filledAny = true; }
+    if (parsed.amount != null) { document.getElementById('input-exp-amount').value = parsed.amount; filledAny = true; }
+    if (parsed.date) { document.getElementById('input-exp-date').value = parsed.date; filledAny = true; }
+    updateConversionPreview();
+
+    setReceiptStatus(
+      filledAny ? 'Filled in from your receipt — please double-check before saving.' : "Couldn't make out enough details — fill in the rest manually.",
+      filledAny ? 'success' : ''
+    );
+  } catch (err) {
+    console.warn('OCR failed', err);
+    setReceiptStatus("Couldn't read that receipt clearly — fill in the details manually.", 'error');
+  } finally {
+    btn.disabled = false;
+    btn.style.opacity = '1';
+  }
+}
+
+function parseReceiptText(text) {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const result = { title: '', amount: null, date: null };
+
+  // Title: the first substantial line is almost always the vendor/store name.
+  for (const line of lines) {
+    if (line.length >= 3 && /[a-zA-Z]/.test(line) && !/^\d+$/.test(line)) {
+      result.title = line.replace(/[*_~]/g, '').slice(0, 60);
+      break;
+    }
+  }
+
+  // Amount: prefer a number on a line that mentions "total"/"amount" etc.
+  // (in English or Turkish), falling back to the largest currency-looking
+  // number found anywhere on the receipt.
+  const totalKeywords = /total|amount due|grand total|balance|toplam|tutar/i;
+  const numberPattern = /\d{1,3}(?:[.,]\d{3})*(?:[.,]\d{2})?/g;
+  const toNumber = (raw) => {
+    // Handle both "1,234.56" and "1.234,56" style grouping.
+    const cleaned = raw.replace(/\s/g, '');
+    if (/,\d{2}$/.test(cleaned) && cleaned.includes('.')) return parseFloat(cleaned.replace(/\./g, '').replace(',', '.'));
+    if (/,\d{2}$/.test(cleaned)) return parseFloat(cleaned.replace(',', '.'));
+    return parseFloat(cleaned.replace(/,/g, ''));
+  };
+
+  let bestAmount = null;
+  lines.forEach(line => {
+    if (totalKeywords.test(line)) {
+      const matches = line.match(numberPattern);
+      if (matches) {
+        const vals = matches.map(toNumber).filter(n => !isNaN(n));
+        if (vals.length) {
+          const max = Math.max(...vals);
+          if (bestAmount === null || max > bestAmount) bestAmount = max;
+        }
+      }
+    }
+  });
+  if (bestAmount === null) {
+    const allMatches = text.match(/\d{1,3}(?:[.,]\d{3})*[.,]\d{2}/g);
+    if (allMatches) {
+      const vals = allMatches.map(toNumber).filter(n => !isNaN(n) && n > 0 && n < 1000000);
+      if (vals.length) bestAmount = Math.max(...vals);
+    }
+  }
+  result.amount = bestAmount;
+
+  // Date: DD.MM.YYYY / DD/MM/YYYY / DD-MM-YYYY / YYYY-MM-DD, all common on receipts.
+  let m = text.match(/(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  let y, mo, d;
+  if (m) { y = m[1]; mo = m[2]; d = m[3]; }
+  else {
+    m = text.match(/(\d{1,2})[-/.](\d{1,2})[-/.](\d{2,4})/);
+    if (m) { d = m[1]; mo = m[2]; y = m[3].length === 2 ? '20' + m[3] : m[3]; }
+  }
+  if (y && mo && d) {
+    mo = String(mo).padStart(2, '0'); d = String(d).padStart(2, '0');
+    if (Number(mo) >= 1 && Number(mo) <= 12 && Number(d) >= 1 && Number(d) <= 31) {
+      result.date = `${y}-${mo}-${d}`;
+    }
+  }
+
+  return result;
 }
 
 /* ============================================================
@@ -1315,8 +1566,11 @@ function deleteTrip(tripId) {
     state.expenses = state.expenses.filter(x => x.SeyahatID !== tripId);
     state.todos = state.todos.filter(x => x.SeyahatID !== tripId);
   }, 'Trip deleted');
-  // Cascade-delete children server-side too (best effort; deleteTrip on the
-  // backend already cascades, so these are only needed if that ever changes).
+  // The backend's deleteTrip already cascades server-side; mirror that
+  // cleanup in the local IndexedDB cache too so nothing orphaned lingers.
+  linkedPlans.forEach(p => idbDelete('plans', p.PlanID));
+  linkedExpenses.forEach(x => idbDelete('expenses', x.HarcamaID));
+  linkedTodos.forEach(t => idbDelete('todos', t.TodoID));
 }
 
 function tripDateForDay(trip, day) {
@@ -2157,9 +2411,12 @@ function categoryDonutHtml(entries, total, currency) {
    INIT
    ============================================================ */
 window.onload = async function() {
-  loadLocal();
-  loadQueue();
+  // Read IndexedDB first — this is what guarantees the UI never opens to a
+  // blank screen, even with zero signal: whatever was last synced (or
+  // queued offline) shows up immediately, before any network call.
+  await loadLocal();
   render();
+
   if (state.gasUrl && state.isOnline) refreshFromBackend();
   if (state.pendingQueue.length && state.isOnline) kickQueue(500);
 

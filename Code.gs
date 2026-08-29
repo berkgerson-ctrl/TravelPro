@@ -12,10 +12,10 @@ const SHEET_EXPENSES = 'Harcamalar';
 const SHEET_TODOS = 'Yapilacaklar';
 
 const HEADERS = {
-  [SHEET_TRIPS]: ['SeyahatID', 'SeyahatAdi', 'Lokasyonlar', 'BaslangicTarihi', 'BitisTarihi', 'ToplamButce', 'ParaBirimi'],
-  [SHEET_PLANS]: ['PlanID', 'SeyahatID', 'Gun', 'Saat', 'Baslik', 'Kategori', 'KonumLink', 'HarcamaID', 'Notlar', 'Sira'],
-  [SHEET_EXPENSES]: ['HarcamaID', 'SeyahatID', 'PlanID', 'Tarih', 'Kategori', 'Tutar', 'ParaBirimi', 'Aciklama', 'Notlar', 'TutarOrijinal', 'ParaBirimiOrijinal'],
-  [SHEET_TODOS]: ['TodoID', 'SeyahatID', 'Metin', 'Tamamlandi'],
+  [SHEET_TRIPS]: ['SeyahatID', 'SeyahatAdi', 'Lokasyonlar', 'BaslangicTarihi', 'BitisTarihi', 'ToplamButce', 'ParaBirimi', 'GuncellemeZamani'],
+  [SHEET_PLANS]: ['PlanID', 'SeyahatID', 'Gun', 'Saat', 'Baslik', 'Kategori', 'KonumLink', 'HarcamaID', 'Notlar', 'Sira', 'GuncellemeZamani'],
+  [SHEET_EXPENSES]: ['HarcamaID', 'SeyahatID', 'PlanID', 'Tarih', 'Kategori', 'Tutar', 'ParaBirimi', 'Aciklama', 'Notlar', 'TutarOrijinal', 'ParaBirimiOrijinal', 'GuncellemeZamani'],
+  [SHEET_TODOS]: ['TodoID', 'SeyahatID', 'Metin', 'Tamamlandi', 'GuncellemeZamani'],
 };
 // Columns that must always be stored as plain text so Sheets doesn't
 // auto-convert them into Date/Time serial values (e.g. "09:00" -> time,
@@ -129,9 +129,24 @@ function _upsert(sheetName, idKey, row) {
   const { sheet } = _ensureSheet(sheetName);
   const headers = _headerRow(sheet); // actual on-sheet header order (handles legacy/repaired sheets)
   const idColIndex = headers.indexOf(idKey);
+  const tsColIndex = headers.indexOf('GuncellemeZamani');
   if (!row[idKey]) row[idKey] = Utilities.getUuid();
-  const rowArray = headers.map((h) => (row[h] !== undefined ? row[h] : ''));
   const existingRow = _findRowById(sheet, idColIndex, row[idKey]);
+
+  // Last-write-wins conflict resolution: if another device already synced a
+  // newer edit of this same record, silently keep that newer version rather
+  // than clobbering it with this older one. This is what makes it safe for
+  // two phones to edit the same trip while offline and reconcile later.
+  if (existingRow > 0 && tsColIndex !== -1 && row['GuncellemeZamani']) {
+    const existingValues = sheet.getRange(existingRow, 1, 1, headers.length).getValues()[0];
+    const existingTs = Number(existingValues[tsColIndex]) || 0;
+    const incomingTs = Number(row['GuncellemeZamani']) || 0;
+    if (existingTs > incomingTs) {
+      return { success: true, skipped: true, reason: 'newer_version_exists', id: row[idKey] };
+    }
+  }
+
+  const rowArray = headers.map((h) => (row[h] !== undefined ? row[h] : ''));
   if (existingRow > 0) {
     sheet.getRange(existingRow, 1, 1, headers.length).setValues([rowArray]);
   } else {
