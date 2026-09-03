@@ -2250,19 +2250,21 @@ function parseCoordsFromLink(link) {
 
 const geocodeCache = {};
 async function geocodePlace(query) {
-  if (geocodeCache[query] !== undefined) return geocodeCache[query];
+  if (geocodeCache[query]) return geocodeCache[query]; // only cache successes — a failed/rate-limited lookup should be retryable
   if (!state.isOnline) return null;
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`, {
       headers: { 'Accept-Language': 'en' }
     });
     const data = await res.json();
-    const result = (data && data[0]) ? { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) } : null;
-    geocodeCache[query] = result;
-    return result;
+    if (data && data[0]) {
+      const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+      geocodeCache[query] = result;
+      return result;
+    }
+    return null;
   } catch (e) {
     console.warn('Geocoding failed', e);
-    geocodeCache[query] = null;
     return null;
   }
 }
@@ -2290,10 +2292,27 @@ async function renderMapTab(trip) {
     return;
   }
 
+  // A bare title like "Bombarde" or "Rafael Beach" is often ambiguous
+  // enough to match an unrelated place anywhere in the world — anchoring
+  // the search with the trip's own location(s) fixes that.
+  const tripLocationHint = parseLocations(trip.Lokasyonlar).join(', ');
+
   const pins = [];
   for (const a of activitiesWithLinks) {
     let coords = parseCoordsFromLink(a.KonumLink);
-    if (!coords) coords = await geocodePlace(a.Baslik);
+    if (!coords) {
+      const query = tripLocationHint ? `${a.Baslik}, ${tripLocationHint}` : a.Baslik;
+      const wasCached = !!geocodeCache[query];
+      coords = await geocodePlace(query);
+      if (!coords) {
+        // Nominatim's free tier allows ~1 request/sec — a fast sequence of
+        // lookups can get transiently rate-limited, so pause and retry once
+        // rather than silently dropping the pin.
+        await sleep(1200);
+        coords = await geocodePlace(query);
+      }
+      if (!wasCached) await sleep(1100);
+    }
     if (coords) pins.push({ activity: a, coords });
   }
   mapPins = pins;
