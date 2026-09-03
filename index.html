@@ -477,6 +477,7 @@ body{
 .map-legend-dot{width:10px; height:10px; border-radius:50%; flex-shrink:0;}
 .map-legend-label{flex:1; font-size:12.5px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .map-legend-day{font-size:10.5px; color:var(--ink-muted); font-weight:700; flex-shrink:0;}
+.map-unresolved-note{padding:10px 2px 2px; font-size:11.5px; color:var(--ink-muted); text-align:center;}
 .leaflet-popup-content{font-family:'Inter',sans-serif; font-size:12.5px;}
 .leaflet-popup-content b{font-family:'Manrope',sans-serif;}
 
@@ -844,7 +845,7 @@ function formatDateStr(value) {
    nothing else; all real data now lives in IndexedDB.
    ============================================================ */
 const IDB_NAME = 'RotaDB';
-const IDB_VERSION = 1;
+const IDB_VERSION = 2;
 let idbPromise = null;
 
 function openIDB() {
@@ -859,6 +860,7 @@ function openIDB() {
       if (!db.objectStoreNames.contains('expenses')) db.createObjectStore('expenses', { keyPath: 'HarcamaID' });
       if (!db.objectStoreNames.contains('todos')) db.createObjectStore('todos', { keyPath: 'TodoID' });
       if (!db.objectStoreNames.contains('queue')) db.createObjectStore('queue', { keyPath: 'qid' });
+      if (!db.objectStoreNames.contains('geocache')) db.createObjectStore('geocache', { keyPath: 'query' });
     };
     req.onsuccess = (e) => resolve(e.target.result);
     req.onerror = () => resolve(null); // degrade gracefully — app still works without IDB
@@ -874,6 +876,17 @@ async function idbGetAll(store) {
       req.onsuccess = () => resolve(req.result || []);
       req.onerror = () => resolve([]);
     } catch (e) { resolve([]); }
+  });
+}
+async function idbGet(store, key) {
+  const db = await openIDB();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(store, 'readonly').objectStore(store).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
   });
 }
 async function idbPut(store, record) {
@@ -2248,9 +2261,20 @@ function parseCoordsFromLink(link) {
   return null;
 }
 
+// In-memory cache for this session, backed by a permanent IndexedDB cache
+// (store: 'geocache') — once a place has been geocoded successfully, it is
+// never looked up again on any future visit to the Map tab. This is what
+// keeps repeat requests to the free Nominatim service well under its rate
+// limit instead of re-querying everything from scratch every time.
 const geocodeCache = {};
 async function geocodePlace(query) {
-  if (geocodeCache[query]) return geocodeCache[query]; // only cache successes — a failed/rate-limited lookup should be retryable
+  if (geocodeCache[query]) return geocodeCache[query];
+  const cached = await idbGet('geocache', query);
+  if (cached) {
+    const result = { lat: cached.lat, lng: cached.lng };
+    geocodeCache[query] = result;
+    return result;
+  }
   if (!state.isOnline) return null;
   try {
     const res = await fetch(`https://nominatim.openstreetmap.org/search?format=json&limit=1&q=${encodeURIComponent(query)}`, {
@@ -2260,6 +2284,7 @@ async function geocodePlace(query) {
     if (data && data[0]) {
       const result = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
       geocodeCache[query] = result;
+      idbPut('geocache', { query, lat: result.lat, lng: result.lng, ts: Date.now() });
       return result;
     }
     return null;
@@ -2302,13 +2327,13 @@ async function renderMapTab(trip) {
     let coords = parseCoordsFromLink(a.KonumLink);
     if (!coords) {
       const query = tripLocationHint ? `${a.Baslik}, ${tripLocationHint}` : a.Baslik;
-      const wasCached = !!geocodeCache[query];
-      coords = await geocodePlace(query);
-      if (!coords) {
-        // Nominatim's free tier allows ~1 request/sec — a fast sequence of
-        // lookups can get transiently rate-limited, so pause and retry once
-        // rather than silently dropping the pin.
-        await sleep(1200);
+      const wasCached = !!geocodeCache[query] || !!(await idbGet('geocache', query));
+      // Nominatim's free tier allows ~1 request/sec, and can transiently
+      // reject a burst of lookups — retry with growing backoff rather than
+      // silently dropping the pin. Once a query succeeds it's cached in
+      // IndexedDB permanently, so this cost is only ever paid once per place.
+      for (let attempt = 0; attempt < 3 && !coords; attempt++) {
+        if (attempt > 0) await sleep(1500 * attempt);
         coords = await geocodePlace(query);
       }
       if (!wasCached) await sleep(1100);
@@ -2351,6 +2376,11 @@ async function renderMapTab(trip) {
   }
   setTimeout(() => { if (tripLeafletMap) tripLeafletMap.invalidateSize(); }, 100);
 
+  const unresolvedCount = activitiesWithLinks.length - pins.length;
+  const unresolvedNote = unresolvedCount
+    ? `<div class="map-unresolved-note">${unresolvedCount} location${unresolvedCount>1?'s':''} couldn't be found${state.isOnline ? ' — try reopening this tab in a moment' : " — you're offline"}.</div>`
+    : '';
+
   document.getElementById('map-legend').innerHTML = pins.map((pin, i) => {
     const meta = CATEGORY_META[pin.activity.Kategori] || CATEGORY_META.Other;
     return `
@@ -2359,7 +2389,7 @@ async function renderMapTab(trip) {
       <div class="map-legend-label">${escapeHtml(pin.activity.Baslik)}</div>
       <div class="map-legend-day">Day ${pin.activity.Gun}</div>
     </div>`;
-  }).join('');
+  }).join('') + unresolvedNote;
 }
 
 function focusMapPin(i) {
